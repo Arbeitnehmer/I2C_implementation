@@ -110,6 +110,9 @@
     #define CONFIG_USART_TYPE 1
     #define CONFIG_MPU_TYPE 1
 
+	#define CONFIG_I2C_1_PRESENT 1
+	#define CONFIG_I2C_3_PRESENT 1
+
     #define CONFIG_OS_CFG_IRQN_TYPE_MIN MemoryManagement_IRQn 
     #define CONFIG_OS_CFG_IRQN_TYPE_MAX SPI4_IRQn
     #define CONFIG_OS_IRQN_TYPE_EXC_NUM_OFFSET (4 - MemoryManagement_IRQn)

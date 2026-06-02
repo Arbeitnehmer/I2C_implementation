@@ -400,13 +400,13 @@ static struct mod_info mods[] = {
         .ops.singleton.mod_run = (mod_run)console_run,
         .cfg_obj = &console_cfg,
     },
-    {
-        .name = "tmr",
-        .instance = MOD_NO_INSTANCE,
-        .ops.singleton.mod_init = (mod_init)tmr_init,
-        .ops.singleton.mod_start = (mod_start)tmr_start,
-        .ops.singleton.mod_run = (mod_run)tmr_run,
-    },
+    //{
+    //    .name = "tmr",
+    //    .instance = MOD_NO_INSTANCE,
+    //    .ops.singleton.mod_init = (mod_init)tmr_init,
+    //    .ops.singleton.mod_start = (mod_start)tmr_start,
+    //    .ops.singleton.mod_run = (mod_run)tmr_run,
+    //},
     {
         .name = "blinky",
         .instance = MOD_NO_INSTANCE,
@@ -574,9 +574,9 @@ void app_main(void)
         }
     }
 
-#if CONFIG_I2C_TYPE == 1 && CONFIG_I2C_3_PRESENT
-    tmphm_cfg.i2c_instance_id = I2C_INSTANCE_3;
-#endif
+//#if CONFIG_I2C_TYPE == 1 && CONFIG_I2C_3_PRESENT
+//    tmphm_cfg.i2c_instance_id = I2C_INSTANCE_3;
+//#endif
 
     for (idx = 0, mod = mods;
          idx < ARRAY_SIZE(mods);

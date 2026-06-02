@@ -75,4 +75,6 @@ int32_t tmr_inst_is_expired(int32_t tmr_id);
 int32_t tmr_inst_is_running(int32_t tmr_id);
 int32_t tmr_inst_dump(int32_t tmr_id);
 
+void tmr_SysTick_Handler(void);
+
 #endif // _TMR_H_

@@ -86,4 +86,23 @@ int32_t i2c_get_op_status(enum i2c_instance_id instance_id);
 enum i2c_errors i2c_get_error(enum i2c_instance_id instance_id);
 int32_t i2c_bus_busy(enum i2c_instance_id instance_id);
 
+
+
+
+
+#if CONFIG_I2C_3_PRESENT
+void _I2C3_EV_IRQHandler(void);
+void _I2C3_ER_IRQHandler(void);
+#endif
+
+#if CONFIG_I2C_1_PRESENT
+void _I2C1_EV_IRQHandler(void);
+void _I2C1_ER_IRQHandler(void);
+#endif
+
+
+
+
+
+
 #endif // _I2C_H_

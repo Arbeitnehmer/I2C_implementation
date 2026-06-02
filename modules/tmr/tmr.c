@@ -459,7 +459,7 @@ int32_t tmr_inst_dump(int32_t tmr_id)
  * This function is called from the SysTick_Handler(). It must be a public
  * function so it can be called externally, but is not really a part of the API.
  */
-void SysTick_Handler(void)
+void tmr_SysTick_Handler(void)
 {
     uint32_t idx;
 

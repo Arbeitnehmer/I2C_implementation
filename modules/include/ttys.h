@@ -84,6 +84,10 @@ int ttys_get_fd(enum ttys_instance_id instance_id);
 FILE* ttys_get_stream(enum ttys_instance_id instance_id);
 int32_t ttys_tx_idle(enum ttys_instance_id instance_id);
 
+
+void ttys_USART2_IRQHandler(void);
+
+
 #if CONFIG_FAULT_PRESENT
 int32_t ttys_putc_panic(enum ttys_instance_id instance_id, char c);
 #endif

@@ -476,7 +476,7 @@ void USART1_IRQHandler(void)
 #endif
 
 #if CONFIG_TTYS_2_PRESENT
-void USART2_IRQHandler(void)
+void ttys_USART2_IRQHandler(void)
 {
     ttys_interrupt(TTYS_INSTANCE_2, USART2_IRQn);
 }
