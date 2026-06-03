@@ -308,6 +308,7 @@ int32_t ttys_start(enum ttys_instance_id instance_id)
     IRQn_Type irq_type;
     int32_t rc;
 
+
     if (instance_id >= TTYS_NUM_INSTANCES ||
         ttys_states[instance_id].uart_reg_base == NULL)
         return MOD_ERR_BAD_INSTANCE;
@@ -483,7 +484,7 @@ void ttys_USART2_IRQHandler(void)
 #endif
 
 #if CONFIG_TTYS_6_PRESENT
-void USART6_IRQHandler(void)
+void ttys_USART6_IRQHandler(void)
 {
     ttys_interrupt(TTYS_INSTANCE_6, USART6_IRQn);
 }

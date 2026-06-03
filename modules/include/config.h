@@ -123,6 +123,8 @@
 
     #define CONFIG_FAULT_FLASH_PANIC_ADDR 0x08004000
 
+
+
 #elif defined STM32L452xx
 
     #define CONFIG_STM32_LL_BUS_HDR "stm32l4xx_ll_bus.h"
@@ -196,6 +198,8 @@
 #else
     #define CONFIG_TTYS_2_PRESENT 1
     #define CONFIG_CONSOLE_DFLT_TTYS_INSTANCE TTYS_INSTANCE_2
+
+	#define CONFIG_TTYS_6_PRESENT 1
 #endif
 
 // Module draw.
@@ -218,7 +222,7 @@
 
 // Module wdg.
 #define CONFIG_WDG_RUN_CHECK_MS 10
-#define CONFIG_WDG_HARD_TIMEOUT_MS 4000
+#define CONFIG_WDG_HARD_TIMEOUT_MS 8000
 
 ////////////////////////////////////////////////////////////////////////////////
 // Feature-dependent configuration.

@@ -1,4 +1,4 @@
-//LOL!!!!!
+#ifndef STM32U575xx // Support for I2C on STM32U575 not implemented.
 /*
  * @brief Implementation of i2c module.
  *
@@ -68,17 +68,19 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "stm32f4xx_ll_gpio.h"
-#include "stm32f4xx_ll_i2c.h"
+#include "config.h"
+#include CONFIG_STM32_LL_GPIO_HDR
+#include CONFIG_STM32_LL_I2C_HDR
 
 #include "cmd.h"
-#include "config.h"
 #include "console.h"
 #include "log.h"
 #include "module.h"
 #include "tmr.h"
 
 #include "i2c.h"
+
+#if CONFIG_I2C_TYPE == 1
 
 ////////////////////////////////////////////////////////////////////////////////
 // Common macros
@@ -112,12 +114,6 @@ enum states {
     STATE_MSTR_RD_GEN_START,
     STATE_MSTR_RD_SENDING_ADDR,
     STATE_MSTR_RD_READING_DATA,
-
-	NUM_STATES_MSTR,
-
-	STATE_SLV_IDLE,
-	STATE_SLV_RD,
-	STATE_SLV_WR
 };
 
 enum interrupt_type {
@@ -159,12 +155,6 @@ enum i2c_u16_pms {
     NUM_U16_PMS
 };
 
-
-static struct circular_buffer{
-	uint8_t data[3];
-	int		id;
-};
-
 ////////////////////////////////////////////////////////////////////////////////
 // Private (static) function declarations
 ////////////////////////////////////////////////////////////////////////////////
@@ -175,24 +165,13 @@ static int32_t start_op(enum i2c_instance_id instance_id, uint32_t dest_addr,
 static void i2c_interrupt(enum i2c_instance_id instance_id,
                           enum interrupt_type inter_type,
                           IRQn_Type irq_type);
-
-static void i2c_interrupt_slave(enum i2c_instance_id instance_id,
-                          enum interrupt_type inter_type,
-                          IRQn_Type irq_type);
-static int32_t i2c_restart_slave(enum i2c_instance_id instance_id);
-
 static enum tmr_cb_action tmr_callback(int32_t tmr_id, uint32_t user_data);
-static enum tmr_cb_action tmr_callback_slave(int32_t tmr_id, uint32_t user_data);
 static void handle_receive_addr(struct i2c_state* st);
 static void handle_receive_rxne(struct i2c_state* st);
 static void handle_receive_btf(struct i2c_state* st);
 static void op_stop_success(struct i2c_state* st, bool set_stop);
 static void op_stop_fail(struct i2c_state* st, enum i2c_errors error,
                          enum i2c_u16_pms pm);
-
-static void op_stop_fail_slave(struct i2c_state* st, enum i2c_errors error,
-                         enum i2c_u16_pms pm);
-
 
 static int32_t cmd_i2c_status(int32_t argc, const char** argv);
 static int32_t cmd_i2c_test(int32_t argc, const char** argv);
@@ -207,8 +186,6 @@ static int32_t log_level = LOG_DEBUG;
 
 // Storage for performance measurements.
 static uint16_t cnts_u16[NUM_U16_PMS];
-
-static struct circular_buffer buffer_slave;
 
 // Names of performance measurements.
 static const char* cnts_u16_names[NUM_U16_PMS] = {
@@ -232,7 +209,7 @@ static struct cmd_cmd_info cmds[] = {
     {
         .name = "test",
         .func = cmd_i2c_test,
-        .help = "Run test, usage: i2c test [<op> [<arg>]] (enter no op/arg for help)",
+        .help = "Run test, usage: i2c test [<op> [<arg>]] (enter no op for help)",
     }
 };
 
@@ -246,9 +223,6 @@ static struct cmd_client_info cmd_info = {
     .u16_pms = cnts_u16,
     .u16_pm_names = cnts_u16_names,
 };
-
-
-
 
 ////////////////////////////////////////////////////////////////////////////////
 // Public (global) variables and externs
@@ -299,19 +273,19 @@ int32_t i2c_init(enum i2c_instance_id instance_id, struct i2c_cfg* cfg)
 
     switch (instance_id) {
 
-#if CONFIG_I2C_HAVE_INSTANCE_1 == 1
+#if CONFIG_I2C_1_PRESENT
         case I2C_INSTANCE_1:
             st->i2c_reg_base = I2C1;
             break;
 #endif
 
-#if CONFIG_I2C_HAVE_INSTANCE_2 == 1
+#if CONFIG_I2C_2_PRESENT
         case I2C_INSTANCE_2:
             st->i2c_reg_base = I2C2;
             break;
 #endif
 
-#if CONFIG_I2C_HAVE_INSTANCE_3 == 1
+#if CONFIG_I2C_3_PRESENT
         case I2C_INSTANCE_3:
             st->i2c_reg_base = I2C3;
             break;
@@ -346,7 +320,7 @@ int32_t i2c_start(enum i2c_instance_id instance_id)
     result = cmd_register(&cmd_info);
     if (result < 0) {
         log_error("i2c_start: cmd error %d\n", result);
-        return MOD_ERR_RESOURCE;
+        return result;
     }
 
     st = &i2c_states[instance_id];
@@ -354,146 +328,10 @@ int32_t i2c_start(enum i2c_instance_id instance_id)
     st->guard_tmr_id = tmr_inst_get_cb(0, tmr_callback, (uint32_t)instance_id,
                                        TMR_CNTX_BASE_LEVEL);
     if (st->guard_tmr_id < 0)
-        return MOD_ERR_RESOURCE;
+        return st->guard_tmr_id;
 
     LL_I2C_Disable(st->i2c_reg_base);
     DISABLE_ALL_INTERRUPTS(st);
-
-    switch (instance_id) {
-#if CONFIG_I2C_HAVE_INSTANCE_1 == 1
-        case I2C_INSTANCE_1:
-            evt_irq_type = I2C1_EV_IRQn;
-            err_irq_type = I2C1_ER_IRQn;
-            break;
-#endif
-
-#if CONFIG_I2C_HAVE_INSTANCE_2 == 1
-        case I2C_INSTANCE_2:
-            evt_irq_type = I2C2_EV_IRQn;
-            err_irq_type = I2C2_ER_IRQn;
-            break;
-#endif
-
-#if CONFIG_I2C_HAVE_INSTANCE_3 == 1
-        case I2C_INSTANCE_3:
-            evt_irq_type = I2C3_EV_IRQn;
-            err_irq_type = I2C3_ER_IRQn;
-            break;
-#endif
-
-        default:
-            return MOD_ERR_BAD_INSTANCE;
-    }
-    NVIC_SetPriority(evt_irq_type,
-                     NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
-    NVIC_EnableIRQ(evt_irq_type);
-    NVIC_SetPriority(err_irq_type,
-                     NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
-    NVIC_EnableIRQ(err_irq_type);
-
-    return 0;
-}
-
-
-//added by Jonas
-//care: state has been set implicitly to IDLE in i2c init.
-//changed: now state= IDLE_SLAVE
-int32_t i2c_start_slave(enum i2c_instance_id instance_id)
-{
-    struct i2c_state* st;
-    IRQn_Type evt_irq_type;
-    IRQn_Type err_irq_type;
-    int32_t result;
-
-    if (instance_id >= I2C_NUM_INSTANCES ||
-        i2c_states[instance_id].i2c_reg_base == NULL)
-        return MOD_ERR_BAD_INSTANCE;
-
-    result = cmd_register(&cmd_info);
-    if (result < 0) {
-        log_error("i2c_start: cmd error %d\n", result);
-        return MOD_ERR_RESOURCE;
-    }
-
-    st = &i2c_states[instance_id];
-    st->state = STATE_SLV_IDLE;
-
-    buffer_slave.data[0] = 0xda;
-    buffer_slave.data[1] = 0xf0;
-    buffer_slave.data[2] = 0x24;
-
-
-
-    st->guard_tmr_id = tmr_inst_get_cb(0, tmr_callback_slave, (uint32_t)instance_id,
-                                       TMR_CNTX_BASE_LEVEL);
-    if (st->guard_tmr_id < 0)
-        return MOD_ERR_RESOURCE;
-
-    //LL_I2C_Disable(st->i2c_reg_base);	I2C should stay enabled!
-    DISABLE_ALL_INTERRUPTS(st);
-
-    switch (instance_id) {
-#if CONFIG_I2C_HAVE_INSTANCE_1 == 1
-        case I2C_INSTANCE_1:
-            evt_irq_type = I2C1_EV_IRQn;
-            err_irq_type = I2C1_ER_IRQn;
-            break;
-#endif
-
-#if CONFIG_I2C_HAVE_INSTANCE_2 == 1
-        case I2C_INSTANCE_2:
-            evt_irq_type = I2C2_EV_IRQn;
-            err_irq_type = I2C2_ER_IRQn;
-            break;
-#endif
-
-#if CONFIG_I2C_HAVE_INSTANCE_3 == 1
-        case I2C_INSTANCE_3:
-            evt_irq_type = I2C3_EV_IRQn;
-            err_irq_type = I2C3_ER_IRQn;
-            break;
-#endif
-
-        default:
-            return MOD_ERR_BAD_INSTANCE;
-    }
-    NVIC_SetPriority(evt_irq_type,
-                     NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
-    NVIC_EnableIRQ(evt_irq_type);
-    NVIC_SetPriority(err_irq_type,
-                     NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
-    NVIC_EnableIRQ(err_irq_type);
-
-    ENABLE_ALL_INTERRUPTS(st);
-    return 0;
-}
-
-
-//added by Jonas
-int32_t i2c_restart_slave(enum i2c_instance_id instance_id)
-{
-    struct i2c_state* st;
-    IRQn_Type evt_irq_type;
-    IRQn_Type err_irq_type;
-
-    log_info("i2c_restart_slave called\n");
-
-    if (instance_id >= I2C_NUM_INSTANCES ||
-        i2c_states[instance_id].i2c_reg_base == NULL)
-        return MOD_ERR_BAD_INSTANCE;
-
-    st = &i2c_states[instance_id];
-    st->state = STATE_SLV_IDLE;
-
-    buffer_slave.data[0] = 0xda;
-    buffer_slave.data[1] = 0xf0;
-    buffer_slave.data[2] = 0x24;
-
-    LL_I2C_Disable(st->i2c_reg_base);//	I2C should stay enabled!
-    DISABLE_ALL_INTERRUPTS(st);
-
-    LL_I2C_Enable(st->i2c_reg_base);
-
 
     switch (instance_id) {
 #if CONFIG_I2C_1_PRESENT
@@ -527,12 +365,8 @@ int32_t i2c_restart_slave(enum i2c_instance_id instance_id)
                      NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
     NVIC_EnableIRQ(err_irq_type);
 
-    ENABLE_ALL_INTERRUPTS(st);
     return 0;
 }
-
-
-
 
 /*
  * @brief Run i2c instance.
@@ -691,14 +525,11 @@ int32_t i2c_bus_busy(enum i2c_instance_id instance_id)
 
 void _I2C1_EV_IRQHandler(void)
 {
-	log_info("I2C1 Event IRQ\n");
     i2c_interrupt(I2C_INSTANCE_1, INTER_TYPE_EVT, I2C1_EV_IRQn);
 }
 
 void _I2C1_ER_IRQHandler(void)
 {
-
-	log_verbose("I2C1 Error IRQ\n");
     i2c_interrupt(I2C_INSTANCE_1, INTER_TYPE_ERR, I2C1_ER_IRQn);
 }
 
@@ -727,7 +558,6 @@ void _I2C3_EV_IRQHandler(void)
 
 void _I2C3_ER_IRQHandler(void)
 {
-	log_debug("I2C3 Error IRQ Handler called\n");
     i2c_interrupt(I2C_INSTANCE_3, INTER_TYPE_ERR, I2C3_ER_IRQn);
 }
 
@@ -755,7 +585,7 @@ static int32_t start_op(enum i2c_instance_id instance_id, uint32_t dest_addr,
     struct i2c_state* st;
 
     log_verbose("op_start state=%d msg_len=%d dest_addr=0x%02x\n", init_state,
-              msg_len, dest_addr);
+                msg_len, dest_addr);
 
     if (instance_id >= I2C_NUM_INSTANCES ||
         i2c_states[instance_id].i2c_reg_base == NULL)
@@ -804,7 +634,11 @@ static int32_t start_op(enum i2c_instance_id instance_id, uint32_t dest_addr,
  * @param[in] irq_type Interrupt number, needed to disable it.
  *
  * @return 0 for success, else a "MOD_ERR" value. See code for details.
+ *
+ * @note The "unused" attribute allows this file to be compiled without warnings
+ *       even if no I2C instances are configured.
  */
+__attribute__((unused))
 static void i2c_interrupt(enum i2c_instance_id instance_id,
                           enum interrupt_type inter_type,
                           IRQn_Type irq_type)
@@ -824,21 +658,14 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
         NVIC_DisableIRQ(irq_type);
         return;
     }
-
-    //Jonas: if state implies a slave-system call slave interrupt func.
-    if(st->state>NUM_STATES_MSTR){
-    	i2c_interrupt_slave(instance_id, inter_type, irq_type);
-    	return;
-    }
-    //end Jonas
     sr1 = st->i2c_reg_base->SR1;
 
+    log_verbose("i2c_interrupt state=%d xferred=%lu sr1=0x%04x\n", st->state,
+                st->msg_bytes_xferred, sr1);
 
     if (inter_type == INTER_TYPE_EVT)
     {
         uint32_t sr1_handled_mask = 0;
-        log_verbose("Event i2c_interrupt state=%d xferred=%lu sr1=0x%04x\n", st->state,
-                  st->msg_bytes_xferred, sr1);
 
         switch (st->state) {
             case STATE_MSTR_WR_GEN_START:
@@ -932,17 +759,13 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
 
         // Check for unexpected events.
         sr1 &= ~sr1_handled_mask;
-        if (sr1 & INTERRUPT_EVT_MASK){
-        	log_debug("Unhandled mask: sr1=0x%04x, handled_mask=0x%04x", sr1, sr1_handled_mask);
-        	op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
-        }
-
+        if (sr1 & INTERRUPT_EVT_MASK)
+            op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
 
     } else if (inter_type == INTER_TYPE_ERR) {
         enum i2c_errors i2c_error = I2C_ERR_INTR_UNEXPECT;
         enum i2c_u16_pms pm_ctr = NUM_U16_PMS;
 
-        log_verbose("Error i2c_interrupt state=%d ,sr1=0x%04x, sr2=0x%04x\n", st->state, sr1, st->i2c_reg_base->SR2);
         // Clear errors.
         st->i2c_reg_base->SR1 &= ~(sr1 & INTERRUPT_ERR_MASK);
 
@@ -967,129 +790,6 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
     }
 }
 
-
-static void i2c_interrupt_slave(enum i2c_instance_id instance_id,
-                          enum interrupt_type inter_type,
-                          IRQn_Type irq_type)
-{
-	struct i2c_state* st;
-	st = &i2c_states[instance_id];
-
-	uint32_t sr1;
-	uint32_t sr2;
-
-
-    if (inter_type == INTER_TYPE_EVT)
-    {
-		//start implementing a read request from IDLE state.
-		switch (st->state) {
-		case STATE_SLV_IDLE:
-			//set timer if modules is stuck somewhere due to misbehaviour
-			tmr_inst_start(st->guard_tmr_id, 100);
-
-			//TODO:
-			//later after succesfull operation turn timer off.
-			//tmr_inst_start(st->guard_tmr_id, 0);
-
-			//clear ADDR bit by reading SR1 and SR2
-			//read TRA bit and check if it was a read or write request.
-			sr1 = st->i2c_reg_base->SR1;
-			sr2 = st->i2c_reg_base->SR2;
-
-			log_info("i2c slave interrupt:STATE_IDLE_SLV sr1=0x%04x , sr2=0x%04x\n", sr1, sr2);
-
-
-			if(sr2 & LL_I2C_SR2_TRA){
-				//TRA bit is set, hence read request
-				st->state = STATE_SLV_RD;
-
-				//read TxE bit = (sr1 & LL_I2C_SR1_TXE)
-				if(sr1 & LL_I2C_SR1_TXE){
-					log_info("TXE bit set\n");
-				}
-				//cleared by writing to DR1
-
-				//st->i2c_reg_base->DR = 0xda;	// 1101|1010
-				st->i2c_reg_base->DR = buffer_slave.data[buffer_slave.id++];
-				buffer_slave.id = buffer_slave.id%3;
-
-				st->state = STATE_SLV_RD;
-			}else{
-				//TRA bit not set, hence write request
-				st->state = STATE_SLV_WR;
-			}
-			break;
-		case STATE_SLV_RD:
-			sr1 = st->i2c_reg_base->SR1;
-			log_info("i2c slave interrupt:STATE_SLV_RD sr1=0x%04x\n", sr1);
-
-
-			if(sr1 & LL_I2C_SR1_TXE){
-				printf("TXE bit in fancy state\n");
-				st->i2c_reg_base->DR = buffer_slave.data[buffer_slave.id++];
-				buffer_slave.id = buffer_slave.id%3;
-			}else{
-				printf("TXE bit not! set\n");
-				st->state = STATE_SLV_IDLE;
-			}
-			break;
-		case STATE_SLV_WR:
-			break;
-		default:
-			break;
-		}
-    }
-	else if(inter_type == INTER_TYPE_ERR){
-        enum i2c_errors i2c_error = I2C_ERR_INTR_UNEXPECT;
-        enum i2c_u16_pms pm_ctr = NUM_U16_PMS;
-
-        sr1 = st->i2c_reg_base->SR1;
-        sr2 = st->i2c_reg_base->SR2;
-        log_verbose("Error i2c_slave_interrupt state=%d ,sr1=0x%04x, sr2=0x%04x\n", st->state, sr1, sr2);
-
-        if ((sr1 & I2C_SR1_AF) && (st->state==STATE_SLV_RD)) {
-        	//not a real error, normal behavior to end I2C communication
-        	//clear error; go to IDLE state again
-        	//st->i2c_reg_base->SR1 &= ~(sr1 & );
-        	tmr_inst_start(st->guard_tmr_id, 0);
-        	st->i2c_reg_base->SR1 = sr1 & ~I2C_SR1_AF;
-        	st->state=STATE_SLV_IDLE;
-
-        	//read sr1 and see if it has been reset properly.
-        	log_verbose("Slave:Check reset after AF error: sr1=0x%04x\n", st->i2c_reg_base->SR1);
-        	return;
-        }
-
-        // Clear errors.
-        st->i2c_reg_base->SR1 &= ~(sr1 & INTERRUPT_ERR_MASK);
-
-
-        // Record and report error.
-        if (sr1 & I2C_SR1_TIMEOUT) {
-            pm_ctr = CNT_TIMEOUT;
-            i2c_error = I2C_ERR_TIMEOUT;
-        }
-        if (sr1 & I2C_SR1_PECERR) {
-            pm_ctr = CNT_PEC_ERR;
-            i2c_error = I2C_ERR_PEC;
-        }
-        if (sr1 & I2C_SR1_AF) {
-            pm_ctr = CNT_ACK_FAIL;
-            i2c_error = I2C_ERR_ACK_FAIL;
-        }
-        if (sr1 & I2C_SR1_BERR) {
-            pm_ctr = CNT_BUS_ERR;
-            i2c_error = I2C_ERR_BUS_ERR;
-        }
-        op_stop_fail_slave(st, i2c_error, pm_ctr);
-        i2c_restart_slave(instance_id);
-    }
-
-	return;
-}
-
-
-
 /*
  * @brief Timer callback
  *
@@ -1113,32 +813,6 @@ static enum tmr_cb_action tmr_callback(int32_t tmr_id, uint32_t user_data)
 
     return TMR_CB_NONE;
 }
-
-
-
-static enum tmr_cb_action tmr_callback_slave(int32_t tmr_id, uint32_t user_data)
-{
-    struct i2c_state* st;
-    enum i2c_instance_id instance_id = (enum i2c_instance_id)user_data;
-
-    log_verbose("i2c tmr_callback_slave\n");
-    if (instance_id >= I2C_NUM_INSTANCES ||
-        i2c_states[instance_id].i2c_reg_base == NULL)
-        return TMR_CB_NONE;
-
-    st = &i2c_states[instance_id];
-    op_stop_fail_slave(st, I2C_ERR_GUARD_TMR, CNT_GUARD_TMR);
-    i2c_restart_slave(instance_id);
-
-
-    return TMR_CB_NONE;
-}
-
-
-
-
-
-
 
 /*
  * @brief Handle receive ADDR event.
@@ -1194,7 +868,7 @@ static void handle_receive_addr(struct i2c_state* st)
  */
 static void handle_receive_rxne(struct i2c_state* st)
 {
-	log_verbose("handle rxne left=%lu\n", st->msg_len - st->msg_bytes_xferred);
+    log_verbose("handle rxne left=%lu\n", st->msg_len - st->msg_bytes_xferred);
     switch (st->msg_len - st->msg_bytes_xferred) {
         case 1:
             // Seems like this case should never happen.
@@ -1224,7 +898,7 @@ static void handle_receive_rxne(struct i2c_state* st)
  */
 static void handle_receive_btf(struct i2c_state* st)
 {
-	log_verbose("handle btf left=%lu\n", st->msg_len - st->msg_bytes_xferred);
+    log_verbose("handle btf left=%lu\n", st->msg_len - st->msg_bytes_xferred);
     switch (st->msg_len - st->msg_bytes_xferred) {
         case 0:
         case 1:
@@ -1256,7 +930,7 @@ static void handle_receive_btf(struct i2c_state* st)
  */
 static void op_stop_success(struct i2c_state* st, bool set_stop)
 {
-	log_verbose("op_stop_success state=%d\n", st->state);
+    log_verbose("op_stop_success state=%d\n", st->state);
     DISABLE_ALL_INTERRUPTS(st);
     if (set_stop)
         LL_I2C_GenerateStopCondition(st->i2c_reg_base);
@@ -1276,7 +950,7 @@ static void op_stop_fail(struct i2c_state* st, enum i2c_errors error,
 {
     // The recovery actions are not clear, for example whether we should be
     // clearing CR1 PE. We just do it.
-	log_verbose("op_stop_fail state=%d error=%d pm=%d\n", st->state, error, pm);
+    log_verbose("op_stop_fail state=%d error=%d pm=%d\n", st->state, error, pm);
     DISABLE_ALL_INTERRUPTS(st);
     LL_I2C_GenerateStopCondition(st->i2c_reg_base);
     tmr_inst_start(st->guard_tmr_id, 0);
@@ -1291,39 +965,6 @@ static void op_stop_fail(struct i2c_state* st, enum i2c_errors error,
         INC_SAT_U16(cnts_u16[pm]);
     st->state = STATE_IDLE;
 }
-
-
-/*
- * @brief added by Jonas: shut down peripheral.
- *
- * @param[in] st Pointer to struct st_state.
- * @param[in] error The I2C-level error.
- */
-static void op_stop_fail_slave(struct i2c_state* st, enum i2c_errors error,
-                         enum i2c_u16_pms pm)
-{
-    // The recovery actions are not clear, for example whether we should be
-    // clearing CR1 PE. We just do it.
-	log_verbose("op_stop_fail_slave state=%d error=%d pm=%d\n", st->state, error, pm);
-    DISABLE_ALL_INTERRUPTS(st);
-    //LL_I2C_GenerateStopCondition(st->i2c_reg_base);
-    tmr_inst_start(st->guard_tmr_id, 0);
-    LL_I2C_Disable(st->i2c_reg_base);
-
-    // Only record the first error in a transaction.
-    if (st->last_op_error == I2C_ERR_NONE) {
-        st->last_op_error = error;
-        st->last_op_error_state = st->state;
-    }
-    if (pm < NUM_U16_PMS)
-        INC_SAT_U16(cnts_u16[pm]);
-    st->state = STATE_SLV_IDLE;
-}
-
-
-
-
-
 
 /*
  * @brief Console command function for "i2c status".
@@ -1442,3 +1083,5 @@ static int32_t cmd_i2c_test(int32_t argc, const char** argv)
 done:
     return 0;
 }
+#endif
+#endif

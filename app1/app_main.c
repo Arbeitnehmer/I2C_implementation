@@ -300,7 +300,7 @@ static struct stat_dur stat_loop_dur;
     };
 
 #if CONFIG_I2C_TYPE == 1 && CONFIG_I2C_3_PRESENT
-    static struct tmphm_cfg tmphm_cfg;
+    //static struct tmphm_cfg tmphm_cfg;
 #endif
 
 #if CONFIG_STEP_1_PRESENT
@@ -400,13 +400,13 @@ static struct mod_info mods[] = {
         .ops.singleton.mod_run = (mod_run)console_run,
         .cfg_obj = &console_cfg,
     },
-    //{
-    //    .name = "tmr",
-    //    .instance = MOD_NO_INSTANCE,
-    //    .ops.singleton.mod_init = (mod_init)tmr_init,
-    //    .ops.singleton.mod_start = (mod_start)tmr_start,
-    //    .ops.singleton.mod_run = (mod_run)tmr_run,
-    //},
+    {
+        .name = "tmr",
+        .instance = MOD_NO_INSTANCE,
+        .ops.singleton.mod_init = (mod_init)tmr_init,
+        .ops.singleton.mod_start = (mod_start)tmr_start,
+        .ops.singleton.mod_run = (mod_run)tmr_run,
+    },
     {
         .name = "blinky",
         .instance = MOD_NO_INSTANCE,
@@ -444,6 +444,18 @@ static struct mod_info mods[] = {
         .cfg_obj = &i2c_cfg,
     },
 #endif
+
+#if CONFIG_I2C_TYPE == 1 && CONFIG_I2C_1_PRESENT
+    {
+        .name = "i2c",
+        .instance = I2C_INSTANCE_1,
+        .ops.singleton.mod_get_def_cfg = (mod_get_def_cfg)i2c_get_def_cfg,
+        .ops.singleton.mod_init = (mod_init)i2c_init,
+        .ops.singleton.mod_start = (mod_start)i2c_start,
+        .cfg_obj = &i2c_cfg,
+    },
+#endif
+
 
 #if CONFIG_TMPHM_1_PRESENT
     {
@@ -540,7 +552,7 @@ void app_main(void)
     LL_RCC_HSI_SetCalibTrimming(64);
 #endif
 
-#if CONFIG_FAULT_PRESENT
+#if CONFIG_WDG_PRESENT
     wdg_start_init_hdw_wdg();
 #endif
 
@@ -631,7 +643,7 @@ void app_main(void)
     // In the super loop invoke the run API on modules the use it.
     //
 
-#if CONFIG_FAULT_PRESENT
+#if CONFIG_WDG_PRESENT
     wdg_init_successful();
     rc = wdg_start_hdw_wdg(CONFIG_WDG_HARD_TIMEOUT_MS);
     if (rc < 0) {
@@ -644,7 +656,6 @@ void app_main(void)
     while (1)
     {
         stat_dur_restart(&stat_loop_dur);
-
         for (idx = 0, mod = mods;
              idx < ARRAY_SIZE(mods);
              idx++, mod++) {
