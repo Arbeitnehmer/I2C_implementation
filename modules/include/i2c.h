@@ -66,6 +66,8 @@ enum i2c_instance_id {
 
 struct i2c_cfg {
     uint32_t transaction_guard_time_ms;
+
+    bool slave_flg;
 };
 
 // Core module interface functions.
@@ -86,6 +88,7 @@ int32_t i2c_get_op_status(enum i2c_instance_id instance_id);
 enum i2c_errors i2c_get_error(enum i2c_instance_id instance_id);
 int32_t i2c_bus_busy(enum i2c_instance_id instance_id);
 
+int32_t toggle_mode(enum i2c_instance_id instance_id);
 
 
 

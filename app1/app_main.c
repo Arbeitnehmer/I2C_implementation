@@ -275,9 +275,15 @@ static struct stat_dur stat_loop_dur;
     static struct gps_cfg gps_cfg;
 #endif
 
-#if CONFIG_I2C_TYPE == 1 && CONFIG_I2C_3_PRESENT
-    static struct i2c_cfg i2c_cfg;
+#if CONFIG_I2C_TYPE == 1 && CONFIG_I2C_1_PRESENT
+    static struct i2c_cfg i2c_cfg_1;
 #endif
+
+#if CONFIG_I2C_TYPE == 1 && CONFIG_I2C_3_PRESENT
+    static struct i2c_cfg i2c_cfg_3;
+#endif
+
+
 
 #if CONFIG_TTYS_1_PRESENT
     static struct ttys_cfg ttys_cfg_1;
@@ -299,8 +305,8 @@ static struct stat_dur stat_loop_dur;
         .sep_period_ms = 200,
     };
 
-#if CONFIG_I2C_TYPE == 1 && CONFIG_I2C_3_PRESENT
-    //static struct tmphm_cfg tmphm_cfg;
+#if CONFIG_TMPHM_1_PRESENT
+    static struct tmphm_cfg tmphm_cfg;
 #endif
 
 #if CONFIG_STEP_1_PRESENT
@@ -441,7 +447,7 @@ static struct mod_info mods[] = {
         .ops.singleton.mod_get_def_cfg = (mod_get_def_cfg)i2c_get_def_cfg,
         .ops.singleton.mod_init = (mod_init)i2c_init,
         .ops.singleton.mod_start = (mod_start)i2c_start,
-        .cfg_obj = &i2c_cfg,
+        .cfg_obj = &i2c_cfg_3,
     },
 #endif
 
@@ -452,7 +458,7 @@ static struct mod_info mods[] = {
         .ops.singleton.mod_get_def_cfg = (mod_get_def_cfg)i2c_get_def_cfg,
         .ops.singleton.mod_init = (mod_init)i2c_init,
         .ops.singleton.mod_start = (mod_start)i2c_start,
-        .cfg_obj = &i2c_cfg,
+        .cfg_obj = &i2c_cfg_1,
     },
 #endif
 
