@@ -109,6 +109,7 @@ enum main_u16_pms {
 ////////////////////////////////////////////////////////////////////////////////
 
 static int32_t cmd_main_status();
+static int32_t cmd_main_reset();
 
 ////////////////////////////////////////////////////////////////////////////////
 // Private (static) variables
@@ -121,6 +122,11 @@ static struct cmd_cmd_info cmds[] = {
         .name = "status",
         .func = cmd_main_status,
         .help = "Get main status, usage: main status [clear]",
+    },
+    {
+        .name = "reset",
+        .func = cmd_main_reset,
+        .help = "Reset MCU, usage: main reset",
     },
 };
 
@@ -722,4 +728,13 @@ static int32_t cmd_main_status(int32_t argc, const char** argv)
         stat_dur_init(&stat_loop_dur);
     }
     return 0;
+}
+
+
+static int32_t cmd_main_reset(){
+
+	CRIT_START();
+    NVIC_SystemReset();
+
+	return 0;
 }

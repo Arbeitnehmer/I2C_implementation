@@ -528,9 +528,6 @@ static void fault_common_handler()
                       sizeof(end));
 
     // Reset system - this function will not return.
-    while(1){
-
-    }
     NVIC_SystemReset();
 }
 

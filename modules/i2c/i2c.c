@@ -137,9 +137,10 @@ struct i2c_state {
 
     uint8_t ring_bfr[CONFIG_I2C_RINGBFR_SIZE];
     uint8_t id_in;
-    uint8_t id_out;
+    uint8_t id_rd;
 
     uint16_t dest_addr;
+    uint16_t slave_addr;
 
     bool slave;
     bool reserved;
@@ -174,6 +175,10 @@ static int32_t start_op(enum i2c_instance_id instance_id, uint32_t dest_addr,
 static void i2c_interrupt(enum i2c_instance_id instance_id,
                           enum interrupt_type inter_type,
                           IRQn_Type irq_type);
+static void i2c_interrupt_slave(enum i2c_instance_id instance_id,
+                          enum interrupt_type inter_type,
+                          IRQn_Type irq_type);
+
 static enum tmr_cb_action tmr_callback(int32_t tmr_id, uint32_t user_data);
 static void handle_receive_addr(struct i2c_state* st);
 static void handle_receive_rxne(struct i2c_state* st);
@@ -187,6 +192,7 @@ static int32_t cmd_i2c_test(int32_t argc, const char** argv);
 
 
 //new functions to implement Slave.
+static void op_stop_success_slave(struct i2c_state* st, bool set_stop);
 static void op_stop_fail_slave(struct i2c_state* st, enum i2c_errors error,
                          enum i2c_u16_pms pm);
 static enum tmr_cb_action tmr_callback_slave(int32_t tmr_id, uint32_t user_data);
@@ -194,6 +200,8 @@ static enum tmr_cb_action tmr_callback_slave(int32_t tmr_id, uint32_t user_data)
 ////////////////////////////////////////////////////////////////////////////////
 // Private (static) variables
 ////////////////////////////////////////////////////////////////////////////////
+
+static uint8_t module_init;
 
 static struct i2c_state i2c_states[I2C_NUM_INSTANCES];
 
@@ -259,22 +267,27 @@ int32_t i2c_get_def_cfg(enum i2c_instance_id instance_id, struct i2c_cfg* cfg)
     cfg->transaction_guard_time_ms = CONFIG_I2C_DFLT_TRANS_GUARD_TIME_MS;
     switch(instance_id){
     case I2C_INSTANCE_1:
+    	cfg->instance_id = I2C_INSTANCE_1;
     	if(!CONFIG_I2C_1_SLV){
     		cfg->slave_flg = false;
     	}else{
     		cfg->slave_flg = true;
     	}
+    	cfg->slave_addr = CONFIG_I2C_1_SLV_ADDR;
     	break;
     case I2C_INSTANCE_3:
+    	cfg->instance_id = I2C_INSTANCE_3;
     	if(!CONFIG_I2C_3_SLV){
     		cfg->slave_flg = false;
     	}else{
     		cfg->slave_flg = true;
     	}
+    	cfg->slave_addr = CONFIG_I2C_3_SLV_ADDR;
     	break;
     default:
     	log_info("I2C Instance %d Master/Slave not configured.", instance_id);
     	cfg->slave_flg = false;
+    	cfg->slave_addr = 0;
     	break;
     }
     return 0;
@@ -306,6 +319,13 @@ int32_t i2c_init(enum i2c_instance_id instance_id, struct i2c_cfg* cfg)
     memset(st, 0, sizeof(*st));
     st->cfg = *cfg;
     st->slave = cfg->slave_flg;
+    st->slave_addr = cfg->slave_addr;
+
+    //*st->ring_bfr = MOD_MAGIC_I2C_BFR;
+    if(cfg->instance_id == I2C_INSTANCE_1){
+    	const uint8_t magic[] = {0x1A, 0x2A, 0x3A, 0x4A, 0x1F, 0x2F, 0x3F, 0x4F};
+    	memcpy(st->ring_bfr, magic, sizeof(magic));
+    }
 
     switch (instance_id) {
 
@@ -353,20 +373,33 @@ int32_t i2c_start(enum i2c_instance_id instance_id)
         i2c_states[instance_id].i2c_reg_base == NULL)
         return MOD_ERR_BAD_INSTANCE;
 
-    result = cmd_register(&cmd_info);
-    if (result < 0) {
-        log_error("i2c_start: cmd error %d\n", result);
-        return result;
+    if(!module_init){
+    	result = cmd_register(&cmd_info);
+    	if (result < 0) {
+    		log_error("i2c_start: cmd error %d\n", result);
+    	    return result;
+    	}
+    	module_init = 1;
     }
 
     st = &i2c_states[instance_id];
 
-    st->guard_tmr_id = tmr_inst_get_cb(0, tmr_callback, (uint32_t)instance_id,
-                                       TMR_CNTX_BASE_LEVEL);
+    if(st->slave){
+    	st->guard_tmr_id = tmr_inst_get_cb(0, tmr_callback_slave, (uint32_t)instance_id,
+    	                                       TMR_CNTX_BASE_LEVEL);
+    }else{
+    	st->guard_tmr_id = tmr_inst_get_cb(0, tmr_callback, (uint32_t)instance_id,
+    	                                       TMR_CNTX_BASE_LEVEL);
+    }
+
+
     if (st->guard_tmr_id < 0)
         return st->guard_tmr_id;
 
-    LL_I2C_Disable(st->i2c_reg_base);
+    if(!st->slave){
+    	LL_I2C_Disable(st->i2c_reg_base);
+    }
+
     DISABLE_ALL_INTERRUPTS(st);
 
     switch (instance_id) {
@@ -401,76 +434,12 @@ int32_t i2c_start(enum i2c_instance_id instance_id)
                      NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
     NVIC_EnableIRQ(err_irq_type);
 
-    return 0;
-}
-
-/*
- * @brief Restart i2c slave instance.
- *
- * @param[in] instance_id Identifies the i2c instance.
- *
- * @return 0 for success, else a "MOD_ERR" value. See code for details.
- *
- * This function starts a i2c module instance, to enter normal operation.
- */
-int32_t i2c_restart_slave(enum i2c_instance_id instance_id)
-{
-    struct i2c_state* st;
-    IRQn_Type evt_irq_type;
-    IRQn_Type err_irq_type;
-
-    log_info("i2c_restart_slave called\n");
-
-    if (instance_id >= I2C_NUM_INSTANCES ||
-        i2c_states[instance_id].i2c_reg_base == NULL)
-        return MOD_ERR_BAD_INSTANCE;
-
-    st = &i2c_states[instance_id];
-    st->state = STATE_SLV_IDLE;
-
-    //buffer_slave.data[0] = 0xda;
-    //buffer_slave.data[1] = 0xf0;
-    //buffer_slave.data[2] = 0x24;
-
-    LL_I2C_Disable(st->i2c_reg_base);//	I2C should stay enabled!
-    DISABLE_ALL_INTERRUPTS(st);
-
-    LL_I2C_Enable(st->i2c_reg_base);
-
-
-    switch (instance_id) {
-#if CONFIG_I2C_1_PRESENT
-        case I2C_INSTANCE_1:
-            evt_irq_type = I2C1_EV_IRQn;
-            err_irq_type = I2C1_ER_IRQn;
-            break;
-#endif
-
-#if CONFIG_I2C_2_PRESENT
-        case I2C_INSTANCE_2:
-            evt_irq_type = I2C2_EV_IRQn;
-            err_irq_type = I2C2_ER_IRQn;
-            break;
-#endif
-
-#if CONFIG_I2C_3_PRESENT
-        case I2C_INSTANCE_3:
-            evt_irq_type = I2C3_EV_IRQn;
-            err_irq_type = I2C3_ER_IRQn;
-            break;
-#endif
-
-        default:
-            return MOD_ERR_BAD_INSTANCE;
+    if(st->slave){
+    	st->state = STATE_SLV_IDLE;
+    	LL_I2C_SetOwnAddress1(st->i2c_reg_base, st->slave_addr << 1, LL_I2C_OWNADDRESS1_7BIT);
+    	ENABLE_ALL_INTERRUPTS(st);
     }
-    NVIC_SetPriority(evt_irq_type,
-                     NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
-    NVIC_EnableIRQ(evt_irq_type);
-    NVIC_SetPriority(err_irq_type,
-                     NVIC_EncodePriority(NVIC_GetPriorityGrouping(),0, 0));
-    NVIC_EnableIRQ(err_irq_type);
 
-    ENABLE_ALL_INTERRUPTS(st);
     return 0;
 }
 
@@ -536,7 +505,21 @@ int32_t i2c_release(enum i2c_instance_id instance_id)
  */
 int32_t toggle_mode(enum i2c_instance_id instance_id)
 {
-	i2c_states[instance_id].slave = !i2c_states[instance_id].slave;
+	struct i2c_state* st;
+	int32_t rc;
+
+	st = &i2c_states[instance_id];
+	rc = tmr_inst_release(st->guard_tmr_id);
+	if(rc != 0){
+		log_info("toggle_mode: release tmr failed rc=%d", rc);
+		return rc;
+	}
+	rc = i2c_start(instance_id);	//maybe i2c_start needs to got adjusted or new function needed.
+	if(rc != 0){
+		log_info("toggle_mode: i2c_start rc=%d", rc);
+		return rc;
+	}
+	st->slave = !i2c_states[instance_id].slave;
     return 0;
 }
 
@@ -556,6 +539,13 @@ int32_t toggle_mode(enum i2c_instance_id instance_id)
 int32_t i2c_write(enum i2c_instance_id instance_id, uint32_t dest_addr,
                   uint8_t* msg_bfr, uint32_t msg_len)
 {
+	struct i2c_state* st;
+
+	st = &i2c_states[instance_id];
+	if(st->slave){
+		log_info("i2c_write: instance %d is slave, no i2c write available.\n", instance_id);
+		return I2C_ERR_INVALID_MODE;
+	}
     return start_op(instance_id, dest_addr, msg_bfr, msg_len,
                     STATE_MSTR_WR_GEN_START);
 }
@@ -576,6 +566,13 @@ int32_t i2c_write(enum i2c_instance_id instance_id, uint32_t dest_addr,
 int32_t i2c_read(enum i2c_instance_id instance_id, uint32_t dest_addr,
                  uint8_t* msg_bfr, uint32_t msg_len)
 {
+	struct i2c_state* st;
+
+	st = &i2c_states[instance_id];
+	if(st->slave){
+		log_info("i2c_read: instance %d is slave, no i2c read available.\n", instance_id);
+		return I2C_ERR_INVALID_MODE;
+	}
     return start_op(instance_id, dest_addr, msg_bfr, msg_len,
                     STATE_MSTR_RD_GEN_START);
 }
@@ -644,12 +641,20 @@ int32_t i2c_bus_busy(enum i2c_instance_id instance_id)
 
 void _I2C1_EV_IRQHandler(void)
 {
-    i2c_interrupt(I2C_INSTANCE_1, INTER_TYPE_EVT, I2C1_EV_IRQn);
+	if(i2c_states[I2C_INSTANCE_1].slave){
+		i2c_interrupt_slave(I2C_INSTANCE_1, INTER_TYPE_EVT, I2C1_EV_IRQn);
+	}else{
+		i2c_interrupt(I2C_INSTANCE_1, INTER_TYPE_EVT, I2C1_EV_IRQn);
+	}
 }
 
 void _I2C1_ER_IRQHandler(void)
 {
-    i2c_interrupt(I2C_INSTANCE_1, INTER_TYPE_ERR, I2C1_ER_IRQn);
+	if(i2c_states[I2C_INSTANCE_1].slave){
+		i2c_interrupt_slave(I2C_INSTANCE_1, INTER_TYPE_ERR, I2C1_ER_IRQn);
+	}else{
+		i2c_interrupt(I2C_INSTANCE_1, INTER_TYPE_ERR, I2C1_ER_IRQn);
+	}
 }
 
 #endif
@@ -672,12 +677,20 @@ void _I2C2_ER_IRQHandler(void)
 
 void _I2C3_EV_IRQHandler(void)
 {
-    i2c_interrupt(I2C_INSTANCE_3, INTER_TYPE_EVT, I2C3_EV_IRQn);
+	if(i2c_states[I2C_INSTANCE_3].slave){
+		i2c_interrupt_slave(I2C_INSTANCE_3, INTER_TYPE_EVT, I2C3_EV_IRQn);
+	}else{
+		i2c_interrupt(I2C_INSTANCE_3, INTER_TYPE_EVT, I2C3_EV_IRQn);
+	}
 }
 
 void _I2C3_ER_IRQHandler(void)
 {
-    i2c_interrupt(I2C_INSTANCE_3, INTER_TYPE_ERR, I2C3_ER_IRQn);
+	if(i2c_states[I2C_INSTANCE_3].slave){
+		i2c_interrupt_slave(I2C_INSTANCE_3, INTER_TYPE_ERR, I2C3_ER_IRQn);
+	}else{
+		i2c_interrupt(I2C_INSTANCE_3, INTER_TYPE_ERR, I2C3_ER_IRQn);
+	}
 }
 
 #endif
@@ -724,7 +737,7 @@ static int32_t start_op(enum i2c_instance_id instance_id, uint32_t dest_addr,
         return MOD_ERR_PERIPH;
     }
 
-    tmr_inst_start(st->guard_tmr_id, 100);
+    tmr_inst_start(st->guard_tmr_id, CONFIG_I2C_DFLT_TRANS_GUARD_TIME_MS);
 
     st->dest_addr = dest_addr;
     st->msg_bfr = msg_bfr;
@@ -779,7 +792,7 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
     }
     sr1 = st->i2c_reg_base->SR1;
 
-    log_verbose("i2c_interrupt state=%d xferred=%lu sr1=0x%04x\n", st->state,
+    log_verbose("i2c_interrupt instance_id=%d state=%d xferred=%lu sr1=0x%04x\n",instance_id, st->state,
                 st->msg_bytes_xferred, sr1);
 
     if (inter_type == INTER_TYPE_EVT)
@@ -882,6 +895,8 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
             op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
 
     } else if (inter_type == INTER_TYPE_ERR) {
+    	//handle error.
+
         enum i2c_errors i2c_error = I2C_ERR_INTR_UNEXPECT;
         enum i2c_u16_pms pm_ctr = NUM_U16_PMS;
 
@@ -906,6 +921,131 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
             i2c_error = I2C_ERR_BUS_ERR;
         }
         op_stop_fail(st, i2c_error, pm_ctr);
+    }
+}
+
+
+/*
+ * @brief Process I2C interrupt for slaves..
+ *
+ * @param[in] instance_id Identifies the i2c instance.
+ * @param[in] inter_type Interrupt type (event or error).
+ * @param[in] irq_type Interrupt number, needed to disable it.
+ *
+ * @return 0 for success, else a "MOD_ERR" value. See code for details.
+ *
+ * @note The "unused" attribute allows this file to be compiled without warnings
+ *       even if no I2C instances are configured.
+ */
+__attribute__((unused))
+static void i2c_interrupt_slave(enum i2c_instance_id instance_id,
+                          enum interrupt_type inter_type,
+                          IRQn_Type irq_type)
+{
+    struct i2c_state* st;
+    uint16_t sr1;
+    uint16_t sr2;
+    uint16_t cr1;
+    uint16_t dr;
+
+    if (instance_id >= I2C_NUM_INSTANCES)
+        return;
+
+    st = &i2c_states[instance_id];
+
+    // If instance is not initialized, we should not get an interrupt, but for
+    // safety just disable it.
+
+    if (st->i2c_reg_base == NULL) {
+        NVIC_DisableIRQ(irq_type);
+        return;
+    }
+    //cr1 = st->i2c_reg_base->CR1;
+    sr1 = st->i2c_reg_base->SR1;
+    sr2 = st->i2c_reg_base->SR2;
+    dr = st->i2c_reg_base->DR;
+    log_verbose("i2c_interrupt_slave instance_id=%d state=%d xferred=%lu sr1=0x%04x sr2=0x%04x dr=0x%04x\n",instance_id, st->state,
+                st->msg_bytes_xferred, sr1, sr2, dr);
+
+    if (inter_type == INTER_TYPE_EVT || ((sr1 & I2C_SR1_AF) && st->state== STATE_SLV_RD))
+    {
+        uint32_t sr1_handled_mask = 0;
+
+        switch (st->state) {
+            case STATE_SLV_IDLE:
+                if (sr1 & LL_I2C_SR1_ADDR) {
+                    // Check ADDR-bit, which should be set.
+                	tmr_inst_start(st->guard_tmr_id, CONFIG_I2C_DFLT_TRANS_GUARD_TIME_MS);
+                	//sr2 = st->i2c_reg_base->SR2;	//this read will clear ADDR bit in
+
+                	if(sr2 & LL_I2C_SR2_TRA){
+                		//read-request
+                		if(sr1 & LL_I2C_SR1_TXE){
+                			st->i2c_reg_base->DR = st->ring_bfr[st->id_rd++];
+                			st->id_rd = st->id_rd % CONFIG_I2C_RINGBFR_SIZE;
+                		}
+                		st->state = STATE_SLV_RD;
+                	}else{
+                		st->state = STATE_SLV_WR;
+                	}
+                }
+                sr1_handled_mask = LL_I2C_SR1_ADDR | LL_I2C_SR2_TRA;
+                break;
+
+            case STATE_SLV_RD:
+        		if(sr1 & I2C_SR1_AF){
+        			//AF signals end of read. Even though it runs over the error line it is regular behavior.
+        			op_stop_success_slave(st, false);
+        		}
+            	if(sr1 & LL_I2C_SR1_TXE){
+        			st->i2c_reg_base->DR = st->ring_bfr[st->id_rd++];
+        			st->id_rd = st->id_rd % CONFIG_I2C_RINGBFR_SIZE;
+        		}
+                break;
+
+            case STATE_SLV_WR:
+
+                break;
+            default:
+                break;
+        }
+
+        // Check for unexpected events.
+        //sr1 &= ~sr1_handled_mask;
+        //if (sr1 & INTERRUPT_EVT_MASK)
+        //    op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
+
+    } else if (inter_type == INTER_TYPE_ERR) {
+        enum i2c_errors i2c_error = I2C_ERR_INTR_UNEXPECT;
+        enum i2c_u16_pms pm_ctr = NUM_U16_PMS;
+
+        // Clear errors.
+        st->i2c_reg_base->SR1 &= ~(sr1 & INTERRUPT_ERR_MASK);
+
+        // Record and report error.
+        if (sr1 & I2C_SR1_TIMEOUT) {
+            pm_ctr = CNT_TIMEOUT;
+            i2c_error = I2C_ERR_TIMEOUT;
+        }
+        if (sr1 & I2C_SR1_PECERR) {
+            pm_ctr = CNT_PEC_ERR;
+            i2c_error = I2C_ERR_PEC;
+        }
+        if (sr1 & I2C_SR1_AF) {
+            pm_ctr = CNT_ACK_FAIL;
+            i2c_error = I2C_ERR_ACK_FAIL;
+        }
+        if (sr1 & I2C_SR1_BERR) {
+            pm_ctr = CNT_BUS_ERR;
+            i2c_error = I2C_ERR_BUS_ERR;
+        }
+        op_stop_fail_slave(st, i2c_error, pm_ctr);
+        LL_I2C_Enable(st->i2c_reg_base);
+        if(st->i2c_reg_base->CR1 & I2C_CR1_STOP){
+        	st->i2c_reg_base->CR1 = st->i2c_reg_base->CR1 & !I2C_CR1_STOP;
+        }
+        LL_I2C_AcknowledgeNextData(st->i2c_reg_base, LL_I2C_ACK);
+        ENABLE_ALL_INTERRUPTS(st);
     }
 }
 
@@ -953,8 +1093,9 @@ static enum tmr_cb_action tmr_callback_slave(int32_t tmr_id, uint32_t user_data)
 
     st = &i2c_states[instance_id];
     op_stop_fail_slave(st, I2C_ERR_GUARD_TMR, CNT_GUARD_TMR);
-    i2c_restart_slave(instance_id);
-
+    LL_I2C_Enable(st->i2c_reg_base);
+    LL_I2C_AcknowledgeNextData(st->i2c_reg_base, LL_I2C_ACK);
+    ENABLE_ALL_INTERRUPTS(st);
 
     return TMR_CB_NONE;
 }
@@ -1075,14 +1216,42 @@ static void handle_receive_btf(struct i2c_state* st)
  */
 static void op_stop_success(struct i2c_state* st, bool set_stop)
 {
-    log_verbose("op_stop_success state=%d\n", st->state);
+    log_verbose("op_stop_success instance_id=%d state=%d\n",st->cfg.instance_id, st->state);
     DISABLE_ALL_INTERRUPTS(st);
     if (set_stop)
         LL_I2C_GenerateStopCondition(st->i2c_reg_base);
     tmr_inst_start(st->guard_tmr_id, 0);
     LL_I2C_Disable(st->i2c_reg_base);
     st->state = STATE_IDLE;
+
+    st->i2c_reg_base->CR1 = st->i2c_reg_base->CR1 & !I2C_CR1_STOP;
 }
+
+/*
+ * @brief Send stop and handle successful operation.
+ *
+ * @param[in] st Pointer to struct st_state.
+ */
+static void op_stop_success_slave(struct i2c_state* st, bool set_stop)
+{
+    log_verbose("op_stop_success_slave instance_id=%d state=%d\n",st->cfg.instance_id, st->state);
+    //DISABLE_ALL_INTERRUPTS(st);
+    //if (set_stop)
+    //    LL_I2C_GenerateStopCondition(st->i2c_reg_base);
+    tmr_inst_start(st->guard_tmr_id, 0);
+    //LL_I2C_Disable(st->i2c_reg_base);
+
+    if(st->id_rd != 0){
+    	st->id_rd--;
+    }else{
+    	st->id_rd = CONFIG_I2C_RINGBFR_SIZE - 1;
+    }
+    st->state = STATE_SLV_IDLE;
+
+    st->i2c_reg_base->SR1 = st->i2c_reg_base->SR1 & !I2C_SR1_AF;
+}
+
+
 
 /*
  * @brief Send stop and handle failed operation.
@@ -1095,12 +1264,16 @@ static void op_stop_fail(struct i2c_state* st, enum i2c_errors error,
 {
     // The recovery actions are not clear, for example whether we should be
     // clearing CR1 PE. We just do it.
-    log_verbose("op_stop_fail state=%d error=%d pm=%d\n", st->state, error, pm);
+    log_verbose("op_stop_fail instance_id=%d state=%d error=%d pm=%d\n",st->cfg.instance_id, st->state, error, pm);
     DISABLE_ALL_INTERRUPTS(st);
     LL_I2C_GenerateStopCondition(st->i2c_reg_base);
     tmr_inst_start(st->guard_tmr_id, 0);
     LL_I2C_Disable(st->i2c_reg_base);
 
+    if(st->i2c_reg_base->CR1 & I2C_CR1_STOP){
+    	log_verbose("op_stop_fail try to unset STOP in CR1\n");
+    	st->i2c_reg_base->CR1 = st->i2c_reg_base->CR1 & !I2C_CR1_STOP;
+    }
     // Only record the first error in a transaction.
     if (st->last_op_error == I2C_ERR_NONE) {
         st->last_op_error = error;
@@ -1122,7 +1295,7 @@ static void op_stop_fail_slave(struct i2c_state* st, enum i2c_errors error,
 {
     // The recovery actions are not clear, for example whether we should be
     // clearing CR1 PE. We just do it.
-	log_verbose("op_stop_fail_slave state=%d error=%d pm=%d\n", st->state, error, pm);
+	log_verbose("op_stop_fail_slave instance_id=%d state=%d error=%d pm=%d\n", st->cfg.instance_id, st->state, error, pm);
     DISABLE_ALL_INTERRUPTS(st);
     //LL_I2C_GenerateStopCondition(st->i2c_reg_base);
     tmr_inst_start(st->guard_tmr_id, 0);

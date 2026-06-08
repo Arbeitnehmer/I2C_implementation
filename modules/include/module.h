@@ -52,6 +52,7 @@
 #define MOD_MAGIC_FAULT 0xdead0001
 #define MOD_MAGIC_LWL 0xf00d0001
 #define MOD_MAGIC_END 0xc0da0001
+#define MOD_MAGIC_I2C_BFR 0xaf
 
 // Get size of an array.
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))

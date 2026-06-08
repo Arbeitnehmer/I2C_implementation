@@ -43,6 +43,7 @@ enum i2c_errors {
     I2C_ERR_ACK_FAIL,
     I2C_ERR_BUS_ERR,
     I2C_ERR_INTR_UNEXPECT,
+	I2C_ERR_INVALID_MODE,
 };
 
 // I2C numbering is based on the MCU hardware definition.
@@ -65,9 +66,13 @@ enum i2c_instance_id {
 };
 
 struct i2c_cfg {
+	uint16_t instance_id;
     uint32_t transaction_guard_time_ms;
 
     bool slave_flg;
+    bool address_10_bit;
+
+    uint16_t slave_addr;
 };
 
 // Core module interface functions.
@@ -90,6 +95,7 @@ int32_t i2c_bus_busy(enum i2c_instance_id instance_id);
 
 int32_t toggle_mode(enum i2c_instance_id instance_id);
 
+//void reset_ringbfr(void);
 
 
 
