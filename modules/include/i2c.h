@@ -72,7 +72,7 @@ struct i2c_cfg {
     bool slave_flg;
     bool address_10_bit;
 
-    uint16_t slave_addr;
+    uint16_t slv_addr;
 };
 
 // Core module interface functions.
