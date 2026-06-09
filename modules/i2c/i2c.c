@@ -396,7 +396,10 @@ int32_t i2c_start(enum i2c_instance_id instance_id)
     if (st->guard_tmr_id < 0)
         return st->guard_tmr_id;
 
-    if(!st->slave){
+    if(st->slave){
+    	LL_I2C_Enable(st->i2c_reg_base);
+    	  LL_I2C_AcknowledgeNextData(st->i2c_reg_base, LL_I2C_ACK);
+    }else{
     	LL_I2C_Disable(st->i2c_reg_base);
     }
 
@@ -514,12 +517,12 @@ int32_t toggle_mode(enum i2c_instance_id instance_id)
 		log_info("toggle_mode: release tmr failed rc=%d", rc);
 		return rc;
 	}
+	st->slave = !st->slave;
 	rc = i2c_start(instance_id);	//maybe i2c_start needs to got adjusted or new function needed.
 	if(rc != 0){
 		log_info("toggle_mode: i2c_start rc=%d", rc);
 		return rc;
 	}
-	st->slave = !i2c_states[instance_id].slave;
     return 0;
 }
 
@@ -1230,7 +1233,7 @@ static void op_stop_success(struct i2c_state* st, bool set_stop)
     LL_I2C_Disable(st->i2c_reg_base);
     st->state = STATE_IDLE;
 
-    st->i2c_reg_base->CR1 = st->i2c_reg_base->CR1 & !I2C_CR1_STOP;
+    st->i2c_reg_base->CR1 &= ~I2C_CR1_STOP;
 }
 
 /*
@@ -1259,7 +1262,7 @@ static void op_stop_success_slave(struct i2c_state* st, bool set_stop)
     st->state = STATE_SLV_IDLE;
 
     sr1 = st->i2c_reg_base->SR1;
-    st->i2c_reg_base->SR1 = sr1 & (~I2C_SR1_AF);
+    st->i2c_reg_base->SR1 = sr1 & ~I2C_SR1_AF;
 
     if(sr1 & LL_I2C_SR1_STOPF){
     	st->i2c_reg_base->CR1 = st->i2c_reg_base->CR1;	//to clear STOPF in sr1
@@ -1288,7 +1291,7 @@ static void op_stop_fail(struct i2c_state* st, enum i2c_errors error,
 
     if(st->i2c_reg_base->CR1 & I2C_CR1_STOP){
     	log_verbose("op_stop_fail try to unset STOP in CR1\n");
-    	st->i2c_reg_base->CR1 = st->i2c_reg_base->CR1 & !I2C_CR1_STOP;
+    	st->i2c_reg_base->CR1 &= ~I2C_CR1_STOP;
     }
     // Only record the first error in a transaction.
     if (st->last_op_error == I2C_ERR_NONE) {
@@ -1328,7 +1331,7 @@ static void op_stop_fail_slave(struct i2c_state* st, enum i2c_errors error,
 
     LL_I2C_Enable(st->i2c_reg_base);
     if(st->i2c_reg_base->CR1 & I2C_CR1_STOP){
-    	st->i2c_reg_base->CR1 = st->i2c_reg_base->CR1 & !I2C_CR1_STOP;
+    	st->i2c_reg_base->CR1 &= ~I2C_CR1_STOP;
     }
     LL_I2C_AcknowledgeNextData(st->i2c_reg_base, LL_I2C_ACK);
     ENABLE_ALL_INTERRUPTS(st);
