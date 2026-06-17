@@ -51,7 +51,7 @@
 #include "os.h"
 #include "stat.h"
 #include "step.h"
-#include "tmphm.h"
+//#include "tmphm.h"
 #include "ttys.h"
 #include "tmr.h"
 #include "wdg.h"

@@ -30,6 +30,7 @@
  */
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "config.h"
 
@@ -81,22 +82,16 @@ int32_t i2c_init(enum i2c_instance_id instance_id, struct i2c_cfg* cfg);
 int32_t i2c_start(enum i2c_instance_id instance_id);
 
 // Other APIs.
-int32_t i2c_reserve(enum i2c_instance_id instance_id);
-int32_t i2c_release(enum i2c_instance_id instance_id);
-
 int32_t i2c_write(enum i2c_instance_id instance_id, uint32_t dest_addr,
                   uint8_t* msg_bfr, uint32_t msg_len);
 int32_t i2c_read(enum i2c_instance_id instance_id, uint32_t dest_addr,
                  uint8_t* msg_bfr, uint32_t msg_len);
 
+
 int32_t i2c_get_op_status(enum i2c_instance_id instance_id);
+
+//API function for more specific debugging/diagnostic, but not part of normal control flow.
 enum i2c_errors i2c_get_error(enum i2c_instance_id instance_id);
-int32_t i2c_bus_busy(enum i2c_instance_id instance_id);
-
-int32_t toggle_mode(enum i2c_instance_id instance_id);
-
-//void reset_ringbfr(void);
-
 
 
 #if CONFIG_I2C_3_PRESENT
