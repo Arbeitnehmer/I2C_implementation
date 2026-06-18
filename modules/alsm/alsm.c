@@ -18,8 +18,12 @@
  *
  * @ref https://cdn-reichelt.de/documents/datenblatt/A300/SENSOR_BH1750.pdf
 
-
-
+/*
+*TODO:
+*	potential bug in alsm_run()
+*
+*
+*
 */
 //#include <>
 #include <stdio.h>
@@ -100,6 +104,7 @@ struct alsm_state {
 
     uint32_t last_meas_ms;
     uint32_t num_meas;
+    uint64_t sum_lux_meas;
 };
 
 
@@ -210,10 +215,6 @@ int32_t alsm_init(struct alsm_cfg* cfg){
 	return 0;
 }
 
-//set-up connections to other modules, such as tmr, watchdog
-//use i2c command to start the sensor.
-//maybe also state machine needed?!
-
 /*
  * @brief start communicating with actual BH1750FVI sensor.
  *			set-up sensor for later on.
@@ -286,15 +287,18 @@ int32_t alsm_start(){
     return 0;
 }
 
-
-//function which does the heavy lifting.
-//read data via i2c, then do the post-processing
-//then do the post-processing
-//store the result or print via CLI
-//implement via state machine?!
+/*
+ * @brief implements state-machine do read BH1750FVI sensor.
+ *		  read via i2c_read(), sensor gives measurements of 16bits.
+ *		  split READ_MEAS and WAIT_MEAS as i2c periphery needs some time to process read-request.
+ *		  Care: as i2c_read() and i2c_get_op_status() is split is fine, as long as every other module stays within protocol i) read/write, reserves/blocks i2c_instance for other modulesii) get_op_status, frees i2c_instance for other modules.
+ *
+ * @return 0 for success, else a "MOD_ERR" value. See code for details.
+ *
+ * added basic data-processing, mea,/max/min
+ *
+ */
 int32_t alsm_run(){
-
-
     struct alsm_state* st;
     int32_t rc;
 
@@ -310,6 +314,7 @@ int32_t alsm_run(){
         		st->state = ALSM_STATE_WAIT_MEAS;
         	}else{
         		//INC_SAT_U16(cnts_u16[CNT_TASK_OVERRUN]);
+        		return MOD_ERR_BUSY;
         	}
         	break;
         case ALSM_STATE_WAIT_MEAS:
@@ -320,11 +325,13 @@ int32_t alsm_run(){
         		//stay in this state and wait for longer
         		//could get logged?!
         		//INC_SAT_U16(cnts_u16[CNT_TASK_OVERRUN]);
+        		return MOD_ERR_OP_IN_PROG;
         	}else{
-        		//some error occured, log error and return to IDLE
-        		log_error("alsm_run: error reading sensor via i2c, rc=%d\n", rc);
+        		//some i2c-error occured, log error and return to IDLE
+        		log_error("alsm_run: i2c-error reading sensor, rc=%d\n", rc);
         		st->state = ALSM_STATE_ERROR;
         		INC_SAT_U16(cnts_u16[CNT_READ_OP_FAIL]);
+        		return MOD_ERR_UNAVAIL;
         	}
         	break;
         case ALSM_STATE_MEAS_PROC:
@@ -334,6 +341,7 @@ int32_t alsm_run(){
         	lux_meas = data/1.2f;
         	st->last_lux_meas = lux_meas;
         	st->last_meas_ms = tmr_get_ms();
+        	st->sum_lux_meas += lux_meas;
         	st->num_meas++;
 
         	if(lux_meas < st->min_lux_meas){
@@ -342,12 +350,8 @@ int32_t alsm_run(){
         	if(lux_meas > st->max_lux_meas){
         		st->max_lux_meas = lux_meas;
         	}
-
-        	//running mean
-        	int32_t delta;
-        	delta = (int32_t)lux_meas - (int32_t)st->mean_lux_meas;
-        	st->mean_lux_meas += delta / st->num_meas;
-
+        	//compute mean
+        	st->mean_lux_meas = st->sum_lux_meas/st->num_meas;
 
         	st->state = ALSM_STATE_IDLE;
         	if(st->log_meas_cli){
@@ -357,11 +361,6 @@ int32_t alsm_run(){
         case ALSM_STATE_ERROR:
         	break;
     }
-
-
-
-
-
 	return 0;
 }
 
@@ -456,7 +455,7 @@ static int32_t cmd_alsm_status(int32_t argc, const char** argv)
     printc("      Num  Last Min  Max  Mean Log\n"
     	   "State Meas AL   AL   AL   AL   CLI\n"
     	   "----- ---- ---- ---- ---- ---- ---\n");
-    printc("%d   %lu %lu %lu %lu %ld  %d\n", st->state,
+    printc("%5d %4lu %4lu %4lu %4lu %4ld %3d\n", st->state,
     		st->num_meas, st->last_lux_meas,
 			st->min_lux_meas, st->max_lux_meas, st->mean_lux_meas, st->log_meas_cli);
     return 0;
@@ -481,7 +480,7 @@ static int32_t cmd_alsm_test(int32_t argc, const char** argv)
     if (argc == 2) {
         printc("Test operations and param(s) are as follows:\n"
                "  Get last meas, usage: alsm test lastmeas\n"
-               "  Set meas time, usage: alsm test meastime <time-ms>\n"
+               "  Set meas time period, usage: alsm test meastime <time-ms>\n"
         	   "  Toggle cli-logging, usage: alsm test cli-log\n"
             );
         return 0;
@@ -507,7 +506,8 @@ static int32_t cmd_alsm_test(int32_t argc, const char** argv)
         if (rc != 1) {
             return MOD_ERR_BAD_CMD;
         }
-        alsm_state.cfg.meas_time_ms = arg_vals[0].val.u;
+        alsm_state.cfg.sample_time_ms = arg_vals[0].val.u;
+        return tmr_inst_set_period(alsm_state.tmr_id, alsm_state.cfg.sample_time_ms);
     } else if (strcasecmp(argv[2], "cli-log") == 0) {
     	alsm_state.log_meas_cli = !alsm_state.log_meas_cli;
     }
