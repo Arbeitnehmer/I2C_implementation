@@ -51,7 +51,7 @@
 #include "os.h"
 #include "stat.h"
 #include "step.h"
-//#include "tmphm.h"
+#include "alsm.h"
 #include "ttys.h"
 #include "tmr.h"
 #include "wdg.h"
@@ -289,7 +289,9 @@ static struct stat_dur stat_loop_dur;
     static struct i2c_cfg i2c_cfg_3;
 #endif
 
-
+#if CONFIG_ALSM_PRESENT
+    static struct alsm_cfg alsm_cfg;
+#endif
 
 #if CONFIG_TTYS_1_PRESENT
     static struct ttys_cfg ttys_cfg_1;
@@ -468,6 +470,18 @@ static struct mod_info mods[] = {
     },
 #endif
 
+
+#if CONFIG_ALSM_PRESENT
+    {
+        .name = "alsm",
+        .instance = MOD_NO_INSTANCE,
+        .ops.singleton.mod_get_def_cfg = (mod_get_def_cfg)alsm_get_def_cfg,
+        .ops.singleton.mod_init = (mod_init)alsm_init,
+        .ops.singleton.mod_start = (mod_start)alsm_start,
+        .ops.singleton.mod_run = (mod_run)alsm_run,
+        .cfg_obj = &alsm_cfg,
+    },
+#endif
 
 #if CONFIG_TMPHM_1_PRESENT
     {

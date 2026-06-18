@@ -35,25 +35,7 @@
 #include "i2c.h"
 #include "module.h"
 
-/*
-struct alsm_cfg
-{
-    //enum i2c_instance_id i2c_instance_id;
-    //uint32_t i2c_addr;
-    uint32_t sample_time_ms;
-    uint32_t meas_time_ms;
-};
 
-// Core module interface functions.
-int32_t alsm_get_def_cfg(struct tmphm_cfg* cfg);
-int32_t alsm_init(struct tmphm_cfg* cfg);
-int32_t alsm_start();
-int32_t alsm_run();
-
-// Other APIs.
-int32_t tmphm_get_last_meas(enum tmphm_instance_id instance_id,
-                            struct tmphm_meas* meas, uint32_t* meas_age_ms);
-*/
 
 struct alsm_cfg
 {
@@ -69,5 +51,7 @@ int32_t alsm_init(struct alsm_cfg* cfg);
 int32_t alsm_start();
 int32_t alsm_run();
 
+// Other APIs.
+int32_t alsm_get_last_meas(uint32_t* meas, uint32_t* meas_age_ms);
 
 #endif // _ALSM_H_

@@ -113,6 +113,9 @@
 	#define CONFIG_I2C_1_PRESENT 1
 	#define CONFIG_I2C_3_PRESENT 1
 
+	#define CONFIG_I2C_INST_1_ID 0
+	#define CONFIG_I2C_INST_3_ID 1
+
 	#define CONFIG_I2C_1_SLV 1
 	#define CONFIG_I2C_3_SLV 0
 
@@ -228,6 +231,14 @@
 #define CONFIG_TMPHM_DFLT_MEAS_TIME_MS 17
 #define CONFIG_TMPHM_WDG_MS 5000
 
+// Module alsm.
+//#define CONFIG_TMPHM_1_DFLT_I2C_ADDR 0x44
+#define CONFIG_ALSM_DFLT_SAMPLE_TIME_MS 1000
+#define CONFIG_ALSM_DFLT_MEAS_TIME_MS 0
+#define CONFIG_ALSM_WDG_MS 5000
+#define CONFIG_ALSM_ADDR_PIN 0
+
+
 // Module wdg.
 #define CONFIG_WDG_RUN_CHECK_MS 10
 #define CONFIG_WDG_HARD_TIMEOUT_MS 8000
@@ -299,6 +310,21 @@
     #endif
 #else
     #define CONFIG_TMPHM_1_DFLT_I2C_INSTANCE CONFIG_DUMMY_0
+#endif
+
+// ALSM features.
+#if defined CONFIG_FEAT_ALSM
+    #if defined STM32F401xE
+        #define CONFIG_I2C_3_PRESENT 1
+        #define CONFIG_ALSM_DFLT_I2C_INSTANCE I2C_INSTANCE_3
+        #define CONFIG_ALSM_PRESENT 1
+        #define CONFIG_TTYS_3_PRESENT 1
+        #define CONFIG_I2C_1_PRESENT 1
+    #else
+        #error ALSM not supported
+    #endif
+#else
+    #define CONFIG_ALSM_DFLT_I2C_INSTANCE CONFIG_DUMMY_0
 #endif
 
 // FLOAT feature.
