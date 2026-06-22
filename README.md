@@ -36,7 +36,7 @@ Key topics explored:
 
 - Low-level peripheral programming
 - I2C communication
-- Aensor integration
+- Sensor integration
 - Debugging and fault analysis
 - Software architecture and modularization
 - Embedded build toolchain (compiler, linker, build system)
