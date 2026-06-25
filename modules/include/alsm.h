@@ -42,7 +42,6 @@ struct alsm_cfg
     enum i2c_instance_id i2c_instance_id;
     //uint32_t i2c_addr;
     uint32_t sample_time_ms;
-    uint32_t meas_time_ms;
 };
 
 // Core module interface functions.

@@ -731,7 +731,14 @@ static int32_t cmd_fault_test(int32_t argc, const char** argv)
     return 0;
 }
 
+__attribute__((noinline))
 static void test_overflow_stack(void)
 {
+    volatile uint8_t buf[128];
+
+    for (uint32_t i = 0; i < sizeof(buf); i++) {
+        buf[i] = 0xAA;
+    }
+
     test_overflow_stack();
 }

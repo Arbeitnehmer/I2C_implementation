@@ -97,14 +97,14 @@ struct alsm_state {
     bool log_meas_cli;
     //measurement data of the module
     //are part of the interface.
-    uint32_t last_lux_meas;
-    uint32_t max_lux_meas;
-    uint32_t min_lux_meas;
-    int32_t mean_lux_meas;
+    uint32_t last_lux;
+    uint32_t max_lux;
+    uint32_t min_lux;
+    int32_t mean_lux;
 
     uint32_t last_meas_ms;
     uint32_t num_meas;
-    uint64_t sum_lux_meas;
+    uint64_t sum_lux;
 };
 
 
@@ -192,8 +192,6 @@ static struct cmd_client_info cmd_info = {
 int32_t alsm_get_def_cfg(struct alsm_cfg* cfg){
     cfg->i2c_instance_id = CONFIG_ALSM_DFLT_I2C_INSTANCE;
     cfg->sample_time_ms = CONFIG_ALSM_DFLT_SAMPLE_TIME_MS;
-    cfg->meas_time_ms = CONFIG_ALSM_DFLT_MEAS_TIME_MS;
-
 	return 0;
 }
 
@@ -211,7 +209,7 @@ int32_t alsm_get_def_cfg(struct alsm_cfg* cfg){
 int32_t alsm_init(struct alsm_cfg* cfg){
 	//state struct already initialied to 0 due to being a (static) global variable.
     alsm_state.cfg = *cfg;
-    alsm_state.min_lux_meas = UINT32_MAX;
+    alsm_state.min_lux = UINT32_MAX;
 	return 0;
 }
 
@@ -314,7 +312,7 @@ int32_t alsm_run(){
         		st->state = ALSM_STATE_WAIT_MEAS;
         	}else{
         		//INC_SAT_U16(cnts_u16[CNT_TASK_OVERRUN]);
-        		return MOD_ERR_BUSY;
+        		return 0;	//still fine behaviour of module, don't push this "error" upward!
         	}
         	break;
         case ALSM_STATE_WAIT_MEAS:
@@ -325,7 +323,7 @@ int32_t alsm_run(){
         		//stay in this state and wait for longer
         		//could get logged?!
         		//INC_SAT_U16(cnts_u16[CNT_TASK_OVERRUN]);
-        		return MOD_ERR_OP_IN_PROG;
+        		return 0;	//still fine behaviour of module, don't push this "error" upward!
         	}else{
         		//some i2c-error occured, log error and return to IDLE
         		log_error("alsm_run: i2c-error reading sensor, rc=%d\n", rc);
@@ -339,23 +337,23 @@ int32_t alsm_run(){
         	uint16_t lux_meas;
         	data = ((uint16_t)st->msg_bfr[0] << 8) | st->msg_bfr[1];
         	lux_meas = data/1.2f;
-        	st->last_lux_meas = lux_meas;
+        	st->last_lux = lux_meas;
         	st->last_meas_ms = tmr_get_ms();
-        	st->sum_lux_meas += lux_meas;
+        	st->sum_lux += lux_meas;
         	st->num_meas++;
 
-        	if(lux_meas < st->min_lux_meas){
-        		st->min_lux_meas = lux_meas;
+        	if(lux_meas < st->min_lux){
+        		st->min_lux = lux_meas;
         	}
-        	if(lux_meas > st->max_lux_meas){
-        		st->max_lux_meas = lux_meas;
+        	if(lux_meas > st->max_lux){
+        		st->max_lux = lux_meas;
         	}
         	//compute mean
-        	st->mean_lux_meas = st->sum_lux_meas/st->num_meas;
+        	st->mean_lux = st->sum_lux/st->num_meas;
 
         	st->state = ALSM_STATE_IDLE;
         	if(st->log_meas_cli){
-        		printc("alsm: AL %lu Lux\n", st->last_lux_meas);
+        		printc("alsm: AL %lu Lux\n", st->last_lux);
         	}
         	break;
         case ALSM_STATE_ERROR:
@@ -386,7 +384,7 @@ int32_t alsm_get_last_meas(uint32_t* meas, uint32_t* meas_age_ms){
 		return MOD_ERR_UNAVAIL;
 	}
 
-	*meas = st->last_lux_meas;
+	*meas = st->last_lux;
 	if(meas_age_ms!=NULL){
 		*meas_age_ms = tmr_get_ms() - st->last_meas_ms;
 	}
@@ -427,7 +425,7 @@ static enum tmr_cb_action tmr_callback(int32_t tmr_id, uint32_t user_data){
     }else if(st->state == ALSM_STATE_ERROR){
     	//module failed and is not functional.
     }else{
-    	//module still processing a sensor read, measurement period too fast and/or error occured.
+    	//module still processing a sensor read, measurement period too fast.
     	//add LWL
     	INC_SAT_U16(cnts_u16[CNT_TASK_OVERRUN]);
     }
@@ -452,12 +450,22 @@ static int32_t cmd_alsm_status(int32_t argc, const char** argv)
     struct alsm_state* st;
     st = &alsm_state;
 
-    printc("      Num  Last Min  Max  Mean Log\n"
-    	   "State Meas AL   AL   AL   AL   CLI\n"
-    	   "----- ---- ---- ---- ---- ---- ---\n");
-    printc("%5d %4lu %4lu %4lu %4lu %4ld %3d\n", st->state,
-    		st->num_meas, st->last_lux_meas,
-			st->min_lux_meas, st->max_lux_meas, st->mean_lux_meas, st->log_meas_cli);
+    //printc("      Num  Last Min  Max  Mean Log T\n"
+    //	   "State Meas AL   AL   AL   AL   CLI ms\n"
+    //	   "----- ---- ---- ---- ---- ---- --- ----\n");
+    //printc("%5d %4lu %4lu %4lu %4lu %4ld %3d %4lu\n", st->state,
+    //		st->num_meas, st->last_lux_meas,
+	//		st->min_lux_meas, st->max_lux_meas, st->mean_lux_meas, st->log_meas_cli, st->cfg.sample_time_ms);
+    printc("Number msrmnts  : %4lu\n", st->num_meas);
+    printc("Last            : %4lu Lux\n", st->last_lux);
+    printc("Min             : %4lu Lux\n", st->min_lux); //min
+    printc("Max             : %4lu Lux\n", st->max_lux); //max
+    printc("Mean            : %4lu Lux\n", st->mean_lux); //mean
+    printc("Sampling-Period : %4lu ms\n", st->cfg.sample_time_ms); //Sample Period
+    printc("State           : %4d\n", st->state);
+
+
+
     return 0;
 }
 
@@ -495,12 +503,12 @@ static int32_t cmd_alsm_test(int32_t argc, const char** argv)
         uint32_t meas;
         uint32_t meas_age_ms;
         rc = alsm_get_last_meas(&meas, &meas_age_ms);
-        if (rc == 0)
-            printf("AL=%lu Lux age=%lu ms\n",
-                   meas,
-                   meas_age_ms);
-        else
-            printf("alsm_get_last_meas fails rc=%ld\n", rc);
+        if (rc == 0){
+        	printc("Last            : %4lu Lux\n", meas); //mean
+        	printc("Age             : %4lu ms\n", meas_age_ms); //Sample Period
+        }else{
+            printf("alsm test lastmeas failed rc=%ld\n", rc);
+        }
     } else if (strcasecmp(argv[2], "meastime") == 0) {
         rc = cmd_parse_args(argc-4, argv+4, "u", arg_vals);
         if (rc != 1) {

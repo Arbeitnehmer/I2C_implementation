@@ -564,6 +564,7 @@ int32_t i2c_get_op_status(enum i2c_instance_id instance_id)
         rc = MOD_ERR_NOT_RESERVED;
     }
     else if (st->state == STATE_IDLE && !i2c_bus_busy(instance_id)){
+    //else if (st->state == STATE_IDLE){
         rc = st->last_op_error == I2C_ERR_NONE ? 0 : MOD_ERR_PERIPH;
         st->reserved = false;	//free i2c_instance for other requests, no matter if request was succesfull or not.
     }
@@ -662,7 +663,7 @@ static int32_t start_op(enum i2c_instance_id instance_id, uint32_t dest_addr,
     st = &i2c_states[instance_id];
     if (st->reserved)
         return MOD_ERR_BUSY;
-    st->reserved = true;
+
 
     if (st->state != STATE_IDLE)
         return MOD_ERR_STATE;
@@ -674,6 +675,7 @@ static int32_t start_op(enum i2c_instance_id instance_id, uint32_t dest_addr,
         return MOD_ERR_PERIPH;
     }
 
+    st->reserved = true;
     tmr_inst_start(st->guard_tmr_id, CONFIG_I2C_DFLT_TRANS_GUARD_TIME_MS);
 
     st->dest_addr = dest_addr;
@@ -808,6 +810,9 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
             case STATE_MSTR_RD_SENDING_ADDR:
                 if (sr1 & LL_I2C_SR1_ADDR) {
                     handle_receive_addr(st);
+                    if (st->msg_len != 0){
+                        st->state = STATE_MSTR_RD_READING_DATA;
+                    }
                 }
                 sr1_handled_mask = LL_I2C_SR1_ADDR;
                 break;
@@ -828,11 +833,16 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
 
         // Check for unexpected events.
         sr1 &= ~sr1_handled_mask;
-        if (sr1 & INTERRUPT_EVT_MASK)
-            op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
+        if (sr1 & INTERRUPT_EVT_MASK){
+        	log_debug("Unexpected Interrupt MSK\n");
+        	op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
+
+        }
 
     } else if (inter_type == INTER_TYPE_ERR) {
     	//handle error.
+    	log_debug("Handle Interrupt Type ERR\n");
+
 
         enum i2c_errors i2c_error = I2C_ERR_INTR_UNEXPECT;
         enum i2c_u16_pms pm_ctr = NUM_U16_PMS;
@@ -967,6 +977,7 @@ static void i2c_interrupt_slave(enum i2c_instance_id instance_id,
     } else if (inter_type == INTER_TYPE_ERR) {
         enum i2c_errors i2c_error = I2C_ERR_INTR_UNEXPECT;
         enum i2c_u16_pms pm_ctr = NUM_U16_PMS;
+
 
         // Clear errors.
         st->i2c_reg_base->SR1 &= ~(sr1 & INTERRUPT_ERR_MASK);
@@ -1174,8 +1185,6 @@ static void handle_receive_addr(struct i2c_state* st)
             (void)st->i2c_reg_base->SR2;
             break;
     }
-    if (st->msg_len != 0)
-        st->state = STATE_MSTR_RD_READING_DATA;
 }
 
 /*
@@ -1185,7 +1194,7 @@ static void handle_receive_addr(struct i2c_state* st)
  */
 static void handle_receive_rxne(struct i2c_state* st)
 {
-    log_verbose("handle rxne left=%lu\n", st->msg_len - st->msg_bytes_xferred);
+    //log_verbose("handle rxne left=%lu\n", st->msg_len - st->msg_bytes_xferred);
     switch (st->msg_len - st->msg_bytes_xferred) {
         case 1:
             // Seems like this case should never happen.
@@ -1215,7 +1224,7 @@ static void handle_receive_rxne(struct i2c_state* st)
  */
 static void handle_receive_btf(struct i2c_state* st)
 {
-    log_verbose("handle btf left=%lu\n", st->msg_len - st->msg_bytes_xferred);
+    //log_verbose("handle btf left=%lu\n", st->msg_len - st->msg_bytes_xferred);
     switch (st->msg_len - st->msg_bytes_xferred) {
         case 0:
         case 1:
@@ -1223,6 +1232,7 @@ static void handle_receive_btf(struct i2c_state* st)
             break;
 
         case 2:
+        	DISABLE_ALL_INTERRUPTS(st);
             LL_I2C_GenerateStopCondition(st->i2c_reg_base);
             st->msg_bfr[st->msg_bytes_xferred++] = st->i2c_reg_base->DR;
             st->msg_bfr[st->msg_bytes_xferred++] = st->i2c_reg_base->DR;
@@ -1248,9 +1258,10 @@ static void handle_receive_btf(struct i2c_state* st)
 static void op_stop_success(struct i2c_state* st, bool set_stop)
 {
     log_verbose("op_stop_success instance_id=%d state=%d\n",st->cfg.instance_id, st->state);
-    DISABLE_ALL_INTERRUPTS(st);
-    if (set_stop)
-        LL_I2C_GenerateStopCondition(st->i2c_reg_base);
+    if (set_stop){
+    	DISABLE_ALL_INTERRUPTS(st);
+    	LL_I2C_GenerateStopCondition(st->i2c_reg_base);
+    }
     tmr_inst_start(st->guard_tmr_id, 0);
     LL_I2C_Disable(st->i2c_reg_base);
     st->state = STATE_IDLE;

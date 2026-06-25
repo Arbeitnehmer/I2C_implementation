@@ -452,9 +452,9 @@ static struct mod_info mods[] = {
     {
         .name = "i2c",
         .instance = I2C_INSTANCE_3,
-        .ops.singleton.mod_get_def_cfg = (mod_get_def_cfg)i2c_get_def_cfg,
-        .ops.singleton.mod_init = (mod_init)i2c_init,
-        .ops.singleton.mod_start = (mod_start)i2c_start,
+        .ops.multi_instance.mod_get_def_cfg = (mod_instance_get_def_cfg)i2c_get_def_cfg,
+        .ops.multi_instance.mod_init = (mod_instance_init)i2c_init,
+        .ops.multi_instance.mod_start = (mod_instance_start)i2c_start,
         .cfg_obj = &i2c_cfg_3,
     },
 #endif
@@ -463,9 +463,9 @@ static struct mod_info mods[] = {
     {
         .name = "i2c",
         .instance = I2C_INSTANCE_1,
-        .ops.singleton.mod_get_def_cfg = (mod_get_def_cfg)i2c_get_def_cfg,
-        .ops.singleton.mod_init = (mod_init)i2c_init,
-        .ops.singleton.mod_start = (mod_start)i2c_start,
+        .ops.multi_instance.mod_get_def_cfg = (mod_instance_get_def_cfg)i2c_get_def_cfg,
+        .ops.multi_instance.mod_init = (mod_instance_init)i2c_init,
+        .ops.multi_instance.mod_start = (mod_instance_start)i2c_start,
         .cfg_obj = &i2c_cfg_1,
     },
 #endif
@@ -685,17 +685,23 @@ void app_main(void)
         for (idx = 0, mod = mods;
              idx < ARRAY_SIZE(mods);
              idx++, mod++) {
-            if (mod->ops.singleton.mod_run != NULL) {
-                if (mod->instance == MOD_NO_INSTANCE) {
-                    rc = mod->ops.singleton.mod_run();
-                } else {
-                    rc = mod->ops.multi_instance.mod_run(mod->instance);
-                }
-                if (rc < 0) {
-                    log_error("Run error for %s: %d\n", mods->name, rc);
-                    INC_SAT_U16(cnts_u16[CNT_RUN_ERR]);
-                }
-            }
+        	if (mod->instance == MOD_NO_INSTANCE) {		//singleton module
+				if (mod->ops.singleton.mod_run != NULL) {
+					rc = mod->ops.singleton.mod_run();
+					if (rc < 0) {
+						log_error("Run error for singleton %s: %d\n", mod->name, rc);
+						INC_SAT_U16(cnts_u16[CNT_RUN_ERR]);
+					}
+				}
+        	}else{	//multi-instance module
+				if (mod->ops.multi_instance.mod_run != NULL) {
+					rc = mod->ops.multi_instance.mod_run(mod->instance);
+					if (rc < 0) {
+						log_error("Run error for multi-instance %s: %d\n", mod->name, rc);
+						INC_SAT_U16(cnts_u16[CNT_RUN_ERR]);
+					}
+				}
+        	}
         }
     }
 }
