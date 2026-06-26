@@ -573,6 +573,8 @@ static void ttys_interrupt(enum ttys_instance_id instance_id,
             next_rx_put_idx = 0;
         if (next_rx_put_idx == st->rx_buf_get_idx) {
             // Need to read DR.
+            volatile uint8_t dummy = st->uart_reg_base->DATA_RX_REG;
+            (void)dummy;
             INC_SAT_U16(cnts_u16[CNT_RX_BUF_OVERRUN]);
         } else {
             st->rx_buf[st->rx_buf_put_idx] = st->uart_reg_base->DATA_RX_REG;

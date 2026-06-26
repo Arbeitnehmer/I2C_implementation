@@ -818,11 +818,13 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
                 break;
 
             case STATE_MSTR_RD_READING_DATA:
-                if (sr1 & (I2C_SR1_RXNE)) {
-                    handle_receive_rxne(st);
-                }
+                //if (sr1 & (I2C_SR1_RXNE)) {
+                //    handle_receive_rxne(st);
+                //}
                 if (sr1 & (I2C_SR1_BTF)) {
                     handle_receive_btf(st);
+                }else if (sr1 & (I2C_SR1_RXNE)) {	//else if on purpose!
+                    handle_receive_rxne(st);
                 }
                 sr1_handled_mask = LL_I2C_SR1_RXNE | LL_I2C_SR1_BTF;
                 break;
@@ -834,7 +836,7 @@ static void i2c_interrupt(enum i2c_instance_id instance_id,
         // Check for unexpected events.
         sr1 &= ~sr1_handled_mask;
         if (sr1 & INTERRUPT_EVT_MASK){
-        	log_debug("Unexpected Interrupt MSK\n");
+        	log_verbose("Unexpected Interrupt MSK sr1=0x%04x\n", sr1);
         	op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
 
         }
@@ -1194,8 +1196,10 @@ static void handle_receive_addr(struct i2c_state* st)
  */
 static void handle_receive_rxne(struct i2c_state* st)
 {
-    //log_verbose("handle rxne left=%lu\n", st->msg_len - st->msg_bytes_xferred);
+    log_verbose("handle rxne left=%lu\n", st->msg_len - st->msg_bytes_xferred);
     switch (st->msg_len - st->msg_bytes_xferred) {
+    	case 0:
+    		break;
         case 1:
             // Seems like this case should never happen.
             st->msg_bfr[st->msg_bytes_xferred++] = st->i2c_reg_base->DR;
@@ -1207,7 +1211,7 @@ static void handle_receive_rxne(struct i2c_state* st)
             // At this point, we only use BTF, to force byte queuing in the
             // device, per the reference manual. Note that stopping the
             // interrupt will not stop the RXNE bit from being set in SR1.
-
+        	st->msg_bfr[st->msg_bytes_xferred++] = st->i2c_reg_base->DR;
             LL_I2C_DisableIT_BUF(st->i2c_reg_base);
             break;
 
@@ -1224,19 +1228,26 @@ static void handle_receive_rxne(struct i2c_state* st)
  */
 static void handle_receive_btf(struct i2c_state* st)
 {
-    //log_verbose("handle btf left=%lu\n", st->msg_len - st->msg_bytes_xferred);
+    log_verbose("handle btf left=%lu\n", st->msg_len - st->msg_bytes_xferred);
     switch (st->msg_len - st->msg_bytes_xferred) {
         case 0:
+        	op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
+        	break;
         case 1:
-            op_stop_fail(st, I2C_ERR_INTR_UNEXPECT, CNT_INTR_UNEXPECT);
+        	DISABLE_ALL_INTERRUPTS(st);
+            LL_I2C_GenerateStopCondition(st->i2c_reg_base);
+            LL_I2C_Disable(st->i2c_reg_base);
+        	st->msg_bfr[st->msg_bytes_xferred++] = st->i2c_reg_base->DR;
+        	op_stop_success(st, true);
             break;
 
         case 2:
         	DISABLE_ALL_INTERRUPTS(st);
             LL_I2C_GenerateStopCondition(st->i2c_reg_base);
+            LL_I2C_Disable(st->i2c_reg_base);
             st->msg_bfr[st->msg_bytes_xferred++] = st->i2c_reg_base->DR;
             st->msg_bfr[st->msg_bytes_xferred++] = st->i2c_reg_base->DR;
-            op_stop_success(st, false);
+            op_stop_success(st, true);
             break;
 
         case 3:

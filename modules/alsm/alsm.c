@@ -36,7 +36,7 @@
 #include "console.h"
 #include "tmr.h"
 #include "log.h"
-
+#include "wdg.h"
 
 #include "alsm.h"
 
@@ -108,15 +108,13 @@ struct alsm_state {
 };
 
 
-// Performance measurements for i2c. Currently these are common to all
-// instances.  A future enhancement would be to make them per-instance.
-
 enum alsm_u16_pms {
     CNT_WRITE_INIT_FAIL,
     CNT_WRITE_OP_FAIL,
     CNT_READ_INIT_FAIL,
     CNT_READ_OP_FAIL,
     CNT_TASK_OVERRUN,
+	CNT_I2C_OVERRUN,
 
     NUM_U16_PMS
 };
@@ -132,6 +130,7 @@ static enum tmr_cb_action tmr_callback(int32_t tmr_id, uint32_t user_data);
 static int32_t cmd_alsm_status(int32_t argc, const char** argv);
 static int32_t cmd_alsm_test(int32_t argc, const char** argv);
 
+static void alsm_post_processing();
 ////////////////////////////////////////////////////////////////////////////////
 // Private (static) variables
 ////////////////////////////////////////////////////////////////////////////////
@@ -150,6 +149,7 @@ static const char* cnts_u16_names[NUM_U16_PMS] = {
     "read init fail",
     "read op fail",
     "task overrun",
+	"i2c usage fail",
 };
 
 
@@ -280,6 +280,16 @@ int32_t alsm_start(){
     	return rc;
     }
 
+	#if CONFIG_TMPHM_WDG_MS > 0 && defined CONFIG_ALSM_WDG_ID
+
+	rc = wdg_register(CONFIG_ALSM_WDG_ID, CONFIG_TMPHM_WDG_MS);
+	if (rc < 0) {
+		log_error("alsm_start: wdg error %d\n", rc);
+		return rc;
+	}
+
+	#endif
+
     log_verbose("alsm_start: Successfuly set-up Module and Sensor\n");
     st->state = ALSM_STATE_IDLE;	//redundant but for clearity.
     return 0;
@@ -307,11 +317,15 @@ int32_t alsm_run(){
             break;
         case ALSM_STATE_READ_MEAS_VALUE:
         	if(tmr_get_ms() - st->i2c_op_start_ms > ALSM_Wait_Time_MS){
-        		i2c_read(st->cfg.i2c_instance_id, ALSM_I2C_ADDR, st->msg_bfr, ALSM_Read_Bytes);
-        		st->i2c_op_start_ms = tmr_get_ms();
-        		st->state = ALSM_STATE_WAIT_MEAS;
+        		rc = i2c_read(st->cfg.i2c_instance_id, ALSM_I2C_ADDR, st->msg_bfr, ALSM_Read_Bytes);
+        		if(rc==0){
+        			st->i2c_op_start_ms = tmr_get_ms();
+        			st->state = ALSM_STATE_WAIT_MEAS;
+        		}else{
+        			INC_SAT_U16(cnts_u16[CNT_READ_INIT_FAIL]);
+        		}
         	}else{
-        		//INC_SAT_U16(cnts_u16[CNT_TASK_OVERRUN]);
+        		INC_SAT_U16(cnts_u16[CNT_TASK_OVERRUN]);
         		return 0;	//still fine behaviour of module, don't push this "error" upward!
         	}
         	break;
@@ -319,13 +333,11 @@ int32_t alsm_run(){
         	rc = i2c_get_op_status(st->cfg.i2c_instance_id);
         	if(rc==0){	//no error.
         		st->state = ALSM_STATE_MEAS_PROC;
+        		wdg_feed(CONFIG_ALSM_WDG_ID);
         	}else if(rc==MOD_ERR_OP_IN_PROG){
-        		//stay in this state and wait for longer
-        		//could get logged?!
-        		//INC_SAT_U16(cnts_u16[CNT_TASK_OVERRUN]);
+        		INC_SAT_U16(cnts_u16[CNT_I2C_OVERRUN]);
         		return 0;	//still fine behaviour of module, don't push this "error" upward!
         	}else{
-        		//some i2c-error occured, log error and return to IDLE
         		log_error("alsm_run: i2c-error reading sensor, rc=%d\n", rc);
         		st->state = ALSM_STATE_ERROR;
         		INC_SAT_U16(cnts_u16[CNT_READ_OP_FAIL]);
@@ -333,23 +345,7 @@ int32_t alsm_run(){
         	}
         	break;
         case ALSM_STATE_MEAS_PROC:
-        	uint16_t data;
-        	uint16_t lux_meas;
-        	data = ((uint16_t)st->msg_bfr[0] << 8) | st->msg_bfr[1];
-        	lux_meas = data/1.2f;
-        	st->last_lux = lux_meas;
-        	st->last_meas_ms = tmr_get_ms();
-        	st->sum_lux += lux_meas;
-        	st->num_meas++;
-
-        	if(lux_meas < st->min_lux){
-        		st->min_lux = lux_meas;
-        	}
-        	if(lux_meas > st->max_lux){
-        		st->max_lux = lux_meas;
-        	}
-        	//compute mean
-        	st->mean_lux = st->sum_lux/st->num_meas;
+        	alsm_post_processing();
 
         	st->state = ALSM_STATE_IDLE;
         	if(st->log_meas_cli){
@@ -357,6 +353,7 @@ int32_t alsm_run(){
         	}
         	break;
         case ALSM_STATE_ERROR:
+        	//TODO: Try to reset/recover i2c module.
         	break;
     }
 	return 0;
@@ -397,6 +394,45 @@ int32_t alsm_get_last_meas(uint32_t* meas, uint32_t* meas_age_ms){
 ////////////////////////////////////////////////////////////////////////////////
 // Private (static) functions
 ////////////////////////////////////////////////////////////////////////////////
+
+
+
+/*
+ * @brief alsm_post_processing.
+ *
+ *
+ * function processes new sensor data.
+ * compute new value.
+ * update mean, max and min.
+ *
+ *
+ * @return void
+ *
+ */
+static void alsm_post_processing(){
+	struct alsm_state* st;
+	st = &alsm_state;
+
+	uint16_t data;
+	uint16_t lux_meas;
+	data = ((uint16_t)st->msg_bfr[0] << 8) | st->msg_bfr[1];
+	lux_meas = data/1.2f;
+	st->last_lux = lux_meas;
+	st->last_meas_ms = tmr_get_ms();
+	st->sum_lux += lux_meas;
+	st->num_meas++;
+
+	if(lux_meas < st->min_lux){
+		st->min_lux = lux_meas;
+	}
+	if(lux_meas > st->max_lux){
+		st->max_lux = lux_meas;
+	}
+	//compute mean
+	st->mean_lux = st->sum_lux/st->num_meas;
+}
+
+
 /*
  * @brief tmr_callback.
  *
