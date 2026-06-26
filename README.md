@@ -39,4 +39,4 @@ Key topics explored:
 - Sensor integration
 - Debugging and fault analysis
 - Software architecture and modularization
-- Embedded build toolchain (compiler, linker, build system)
+- Embedded development toolchain (compiler, linker, build system, debugger)
