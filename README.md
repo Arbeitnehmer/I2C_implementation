@@ -13,11 +13,11 @@ https://github.com/g-schro/ram-class-1-code
 
 The following components were developed or significantly extended by me:
 
-- Refactoring and extension of the I2C module and public API
-- Implementation of I2C slave functionality
-- Design and implementation of the ambient light sensor module (alsm)
-- Bug fix in ttys module: UART RX buffer overrun caused interrupt storm.
-- Python-based test automation for UART communication (work in progress)
+- Refactoring and extension of the I2C module and public API ('modules/i2c', 'modules/include/i2c.h')
+- Implementation of I2C slave functionality ('modules/i2c')
+- Design and implementation of the ambient light sensor module ('modules/alsm')
+- Bug fix in ttys module: interrupt handler didn't clear interrupt source, namely UART RXNE flag. ('modules/ttys')
+- Python-based hardware test automation for UART/CLI communication (work in progress)
 
 
 ## Hardware
