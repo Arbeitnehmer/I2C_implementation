@@ -16,7 +16,7 @@ The following components were developed or significantly extended by me:
 - Refactoring and extension of the I2C module and public API
 - Implementation of I2C slave functionality
 - Design and implementation of the ambient light sensor module (alsm)
-- Minor bug-fixes in the main application loop
+- Bug fix in ttys module: UART RX buffer overrun caused interrupt storm.
 - Python-based test automation for UART communication (work in progress)
 
 
